@@ -1,0 +1,42 @@
+
+==================================================
+      DISCRETE MAP BENCHMARKS
+==================================================
+
+--- Logistic Map (r=4.0) ---
+Simulation (50,000 steps)          : 1.8932s
+Spectrum Calculation (Discrete QR) : 0.0004s
+Logistic Map Results               : [+0.69315]
+
+--- Henon Map (a=1.4, b=0.3) ---
+Simulation (50,000 steps)          : 0.3272s
+Spectrum Calculation (Householder) : 0.5736s
+Henon Results (Householder)        : [+0.41851 -1.62248]
+Spectrum Calculation (Fast GS)     : 0.5428s
+Henon Results (Fast GS)            : [+0.41851 -1.62248]
+
+==================================================
+      LORENZ 63 ODE BENCHMARKS
+==================================================
+
+Integrating system from t=50 to t=350 (dt=0.005)...
+Total RK4 Integration (Standard)   : 2.6709s
+
+Algorithm Performance & Numeric Agreement:
+QR on Phi History (Batched)        : 0.0260s
+Method 1: QR on Phi                : [+0.90264 +0.00224 -14.57154]
+Saving R Diagonals (Householder)   : 2.4636s
+Method 2: Saving R (Householder)   : [+0.90264 +0.00224 -14.57154]
+Saving R Diagonals (Fast GS)       : 2.8169s
+Method 2b: Saving R (Fast GS)      : [+0.90264 +0.00224 -14.57154]
+
+--- Numba JIT Acceleration ---
+Numba JIT Integration (Fast GS)    : 0.2472s
+Method 6: Numba JIT (RK4+FastGS)   : [+0.90264 +0.00224 -14.57154]
+Speedup vs Standard RK4            : 10.8x
+Matrix Exponential Loop (expm)     : 3.5469s
+Method 3: Matrix Exp               : [+0.90258 +0.00220 -14.57146]
+Continuous QR (Mean)               : 0.4900s
+Method 4: Continuous Mean          : [+0.91266 -0.00114 -14.57818]
+Continuous QR (Simpson Integral)   : 0.0011s
+Method 5: Continuous Simpson       : [+0.91264 -0.00111 -14.57797]

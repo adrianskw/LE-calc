@@ -1,50 +1,20 @@
-
 import numpy as np
-from le_calc.utils import integrate
+from .base import DynamicalSystem
 
-class ODEs:
+class ODEs(DynamicalSystem):
     """
-    Base class for discrete-time dynamical systems (maps).
-    Provides methods to simulate the trajectory and compute the Lyapunov spectrum.
+    Base class for continuous-time dynamical systems (ODEs).
+    Provides methods to define the vector field and Jacobian.
     """
     
     def __init__(self, dim: int):
-        self.dim: int = dim
-        self.n_steps: int
-        self.x: np.ndarray
-        self.J: np.ndarray
-        self.lyapunov_spectrum = np.empty(dim)
+        super().__init__(dim=dim)
 
     def ode(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError
 
     def jac(self, x: np.ndarray) -> np.ndarray:
         raise NotImplementedError
-
-    # def simulate(self, x0, n_steps):
-    #     self.n_steps = n_steps
-    #     self.x: np.ndarray = np.empty((self.n_steps, self.dim))
-
-    #     x0 = np.atleast_1d(np.asarray(x0, dtype=float))   # handle scalars & arrays
-    #     if len(x0) != self.dim:
-    #         raise ValueError(
-    #             f"{type(self).__name__} expects a {self.dim}-D initial condition, "
-    #             f"but got x0 with length {len(x0)}."
-    #         )
-    #     self.x = np.zeros((self.n_steps, self.dim))
-    #     for _ in range(min(1000, self.n_steps // 2)):            # warmup: discard transient
-    #         x0 = self.forward_map(x0)
-    #     for i in range(self.n_steps):
-    #         self.x[i] = x0
-    #         x0 = self.forward_map(x0)
-
-    # def calc_lyapunov_spectrum(self):
-    #     logAbsDiagR = np.zeros((self.n_steps, self.dim))
-    #     Q = np.eye(self.dim)
-    #     for i in range(self.n_steps):
-    #         Q,R = np.linalg.qr(self.jac(self.x[i])@Q)
-    #         logAbsDiagR[i] = np.log(np.abs(np.diag(R)))
-    #     self.lyapunov_spectrum = np.mean(logAbsDiagR, axis=0)
 
 class Lorenz63(ODEs):
     """
@@ -80,13 +50,28 @@ class Lorenz63(ODEs):
     def jac(self, x: np.ndarray) -> np.ndarray:
         """
         Compute the analytical Jacobian matrix df/dx.
+        Supports 1D array of shape (3,) and 2D array of shape (N, 3).
         """
-        x1, x2, x3 = x
-        return np.array([
-            [-self.sigma,   self.sigma,  0.0],
-            [self.rho - x3, -1.0,       -x1],
-            [x2,            x1,         -self.beta],
-        ])
+        if x.ndim == 1:
+            x1, x2, x3 = x
+            return np.array([
+                [-self.sigma,   self.sigma,  0.0],
+                [self.rho - x3, -1.0,       -x1],
+                [x2,            x1,         -self.beta],
+            ])
+        else:
+            x1, x2, x3 = x.T
+            N = x.shape[0]
+            J = np.zeros((N, 3, 3))
+            J[:, 0, 0] = -self.sigma
+            J[:, 0, 1] = self.sigma
+            J[:, 1, 0] = self.rho - x3
+            J[:, 1, 1] = -1.0
+            J[:, 1, 2] = -x1
+            J[:, 2, 0] = x2
+            J[:, 2, 1] = x1
+            J[:, 2, 2] = -self.beta
+            return J
 
 
 class Rossler(ODEs):
@@ -118,9 +103,21 @@ class Rossler(ODEs):
         ])
 
     def jac(self, x: np.ndarray) -> np.ndarray:
-        x1, x2, x3 = x
-        return np.array([
-            [0.0, -1.0,     -1.0],
-            [1.0, self.a,   0.0],
-            [x3,  0.0,      x1 - self.c]
-        ])
+        if x.ndim == 1:
+            x1, x2, x3 = x
+            return np.array([
+                [0.0, -1.0,     -1.0],
+                [1.0, self.a,   0.0],
+                [x3,  0.0,      x1 - self.c]
+            ])
+        else:
+            x1, x2, x3 = x.T
+            N = x.shape[0]
+            J = np.zeros((N, 3, 3))
+            J[:, 0, 1] = -1.0
+            J[:, 0, 2] = -1.0
+            J[:, 1, 0] = 1.0
+            J[:, 1, 1] = self.a
+            J[:, 2, 0] = x3
+            J[:, 2, 2] = x1 - self.c
+            return J
