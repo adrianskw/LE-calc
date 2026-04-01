@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import time
 import sys
 import os
@@ -44,8 +43,9 @@ def run_discrete_map_benchmarks():
     print("\n--- Logistic Map (r=4.0) ---")
     model = LogisticMap()
     x0 = 0.65
-    with timer("Simulation (50,000 steps)"):
-        model.simulate(x0, n_steps=50000)
+    n_steps=100000
+    with timer(f"Simulation ({n_steps:,} steps)"):
+        model.simulate(x0, n_steps=n_steps)
     with timer("Spectrum Calculation (Discrete QR)"):
         spec = model.discrete_qr_lyapunov_spectrum()
     print_spectrum("Logistic Map Results", spec)
@@ -54,8 +54,9 @@ def run_discrete_map_benchmarks():
     print("\n--- Henon Map (a=1.4, b=0.3) ---")
     model = HenonMap()
     x0 = [0.5, 0.2]
-    with timer("Simulation (50,000 steps)"):
-        model.simulate(x0, n_steps=50000)
+    n_steps=100000
+    with timer(f"Simulation ({n_steps:,} steps)"):
+        model.simulate(x0, n_steps=n_steps)
     with timer("Spectrum Calculation (Householder)"):
         spec = model.discrete_qr_lyapunov_spectrum(qr_method='householder')
     print_spectrum("Henon Results (Householder)", spec)
@@ -73,34 +74,44 @@ def run_lorenz_benchmarks():
     x0 = [1.0, 1.0, 10.0]
     dim = len(x0)
     Phi0 = np.eye(dim)
-    t_span = (50, 350) # burn in for 0<t<50
+    t_burn = 50.0
+    t_window = 500.0
+    t_span = (t_burn, t_burn + t_window)
     dt = 0.005
-    n_steps = int((t_span[1] - t_span[0]) / dt)
+    n_steps = int(t_window / dt)
 
-    # 1. Compare QR Integration Methods
-    for qr_method in ['gram-schmidt', 'householder']:
-        print(f"\n--- {qr_method.capitalize()} QR ---")
+    print(f"Transient period (Burn-in) : {t_burn}")
+    print(f"Integration window         : {t_window} (from t={t_span[0]} to {t_span[1]})")
+    print(f"Time step                  : {dt}")
+    print(f"Number of steps            : {n_steps:,}")
+
+    # 1. Compare RK methods and QR Integration Methods
+    for method in ['RK2', 'RK4']:
+        print(f"\n{'='*15} Testing {method} Integration {'='*15}")
         
-        with timer(f"RK4 Integration ({qr_method})"):
-            x_history, Phi_history, Q_history, R_history = integrate_variational(
-                model, dt, t_span, x0, Phi0, qr_method=qr_method
-            )
+        for qr_method in ['gram-schmidt', 'householder']:
+            print(f"\n--- {qr_method.capitalize()} QR ({method}) ---")
+            
+            with timer(f"Integration ({method}/{qr_method})"):
+                x_history, Phi_history, Q_history, R_history = integrate_variational(
+                    model, dt, t_span, x0, Phi0, method=method, qr_method=qr_method
+                )
 
-        # Method 1: Discrete QR Result (extracted from R_history)
-        with timer("Method 1: Discrete QR (from R)"):
-            spec1 = discrete_qr_spectrum(R_history, dt)
-        print_spectrum("Spectrum (Discrete QR)", spec1)
+            # Method 1: Discrete QR Result (extracted from R_history)
+            with timer("Method 1: Discrete QR (from R)"):
+                spec1 = discrete_qr_spectrum(R_history, dt)
+            print_spectrum("Discrete QR Spectrum", spec1)
 
-        # Method 2: Continuous QR Result (computed from Q_history)
-        with timer("Method 2: Continuous QR (Mean)"):
-            J_history = model.jac(x_history)
-            spec2 = continuous_qr_spectrum(Q_history, J_history)
-        print_spectrum("Spectrum (Continuous QR)", spec2)
+            # Method 2: Continuous QR Result (computed from Q_history)
+            with timer("Method 2: Continuous QR (Mean)"):
+                J_history = model.jac(x_history)
+                spec2 = continuous_qr_spectrum(Q_history, J_history)
+            print_spectrum("Continuous QR Spectrum", spec2)
 
-        with timer("Matrix Exponential (expm)"):
-            # Re-using J_history from the continuous QR step (last iteration)
-            spec3 = matrix_exponential_spectrum(J_history, dt, qr_method=qr_method)
-        print_spectrum("Method 3: Matrix Exp", spec3)    
+            with timer("Method 3: Matrix Exponential"):
+                    # Re-using J_history from the continuous QR step (last iteration)
+                    spec3 = matrix_exponential_spectrum(J_history, dt, qr_method=qr_method)
+            print_spectrum("Matrix Exp + Discrete QR Spectrum ", spec3)
 
 if __name__ == "__main__":
     run_discrete_map_benchmarks()

@@ -1,6 +1,6 @@
 import numpy as np
 from .base import DynamicalSystem
-from .utils import qr_2x2, qr_3x3
+from .utils import qr_2x2, qr_3x3, discrete_qr_spectrum
 
 class DiscreteMap(DynamicalSystem):
     """
@@ -59,26 +59,19 @@ class DiscreteMap(DynamicalSystem):
             self.lyapunov_spectrum = np.array([np.mean(log_abs_j)])
             return self.lyapunov_spectrum
 
-        # If requested, use fast analytical QR using Gram-Schmidt for small dimensions
+        # If requested, use fast analytical QR routines for small dimensions
+        R_history = np.zeros((self.n_steps, self.dim, self.dim))
+        Q = np.eye(self.dim)
+        
         if qr_method == 'gram-schmidt' and self.dim in [2, 3]:
             qr_func = qr_2x2 if self.dim == 2 else qr_3x3
-            logAbsDiagR = np.zeros((self.n_steps, self.dim))
-            Q = np.eye(self.dim)
             for i in range(self.n_steps):
-                Q, R = qr_func(self.J[i] @ Q)
-                logAbsDiagR[i] = np.log(np.abs(np.diagonal(R)))
-            
-            self.lyapunov_spectrum = np.mean(logAbsDiagR, axis=0)
-            return self.lyapunov_spectrum
-
-        # Default: General Case for dim >= 2 using Householder
-        logAbsDiagR = np.zeros((self.n_steps, self.dim))
-        Q = np.eye(self.dim)
-        for i in range(self.n_steps):
-            Q, R = np.linalg.qr(self.J[i] @ Q)
-            logAbsDiagR[i] = np.log(np.abs(np.diagonal(R)))
-            
-        self.lyapunov_spectrum = np.mean(logAbsDiagR, axis=0)
+                Q, R_history[i] = qr_func(self.J[i] @ Q)
+        else:
+            for i in range(self.n_steps):
+                Q, R_history[i] = np.linalg.qr(self.J[i] @ Q)
+        
+        self.lyapunov_spectrum = discrete_qr_spectrum(R_history, 1.0) # Maps have dt=1.0 implicitly
         return self.lyapunov_spectrum
 
 

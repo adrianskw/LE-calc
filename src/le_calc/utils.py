@@ -7,6 +7,62 @@ from numpy.typing import ArrayLike
 from scipy.linalg import expm
 
 
+def rk1_step(model, dt: float, y: np.ndarray) -> np.ndarray:
+    """Take a single Forward Euler (RK1) step for the state only."""
+    return y + dt * model.ode(y)
+
+
+def rk1_step_variational(model, dt: float, y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Take a single Forward Euler (RK1) step for both state and variational equation."""
+    y_next = y   + dt * model.ode(y)
+    Phi_next = Phi + dt * (model.jac(y) @ Phi)
+    return y_next, Phi_next
+
+
+def rk2_step(model, dt: float, y: np.ndarray) -> np.ndarray:
+    """Take a single Midpoint (RK2) step for the state only."""
+    k1 = model.ode(y)
+    k2 = model.ode(y + 0.5 * dt * k1)
+    return y + dt * k2
+
+
+def rk2_step_variational(model, dt: float, y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Take a single Midpoint (RK2) step for both state and variational equation."""
+    k1 = model.ode(y)
+    L1 = model.jac(y) @ Phi
+
+    k2 = model.ode(y + 0.5 * dt * k1)
+    L2 = model.jac(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
+
+    y_next = y   + dt * k2
+    Phi_next = Phi + dt * L2
+    return y_next, Phi_next
+
+
+def rk3_step(model, dt: float, y: np.ndarray) -> np.ndarray:
+    """Take a single Heun's 3rd order (RK3) step for the state only."""
+    k1 = model.ode(y)
+    k2 = model.ode(y + 0.5 * dt * k1)
+    k3 = model.ode(y - dt * k1 + 2.0 * dt * k2)
+    return y + (dt / 6.0) * (k1 + 4.0 * k2 + k3)
+
+
+def rk3_step_variational(model, dt: float, y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Take a single Heun's 3rd order (RK3) step for both state and variational equation."""
+    k1 = model.ode(y)
+    L1 = model.jac(y) @ Phi
+
+    k2 = model.ode(y + 0.5 * dt * k1)
+    L2 = model.jac(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
+
+    k3 = model.ode(y - dt * k1 + 2.0 * dt * k2)
+    L3 = model.jac(y - dt * k1 + 2.0 * dt * k2) @ (Phi - dt * L1 + 2.0 * dt * L2)
+
+    y_next = y   + (dt / 6.0) * (k1 + 4.0 * k2 + k3)
+    Phi_next = Phi + (dt / 6.0) * (L1 + 4.0 * L2 + L3)
+    return y_next, Phi_next
+
+
 def rk4_step(model, dt: float, y: np.ndarray) -> np.ndarray:
     """Take a single Runge-Kutta 4th order step for the state only."""
     k1 = model.ode(y)
@@ -35,9 +91,8 @@ def rk4_step_variational(model, dt: float, y: np.ndarray, Phi: np.ndarray) -> tu
     return y_next, Phi_next
 
 
-"""Analytical 2x2 QR decomposition (Modified Gram-Schmidt)."""
-# Optimized scalar math to avoid NumPy overhead for 2x2
 def qr_2x2(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Analytical 2x2 QR decomposition (Modified Gram-Schmidt)."""
     a00, a10 = A[0, 0], A[1, 0]
     r11 = np.sqrt(a00*a00 + a10*a10)
     q00, q10 = a00 / r11, a10 / r11
@@ -58,9 +113,9 @@ def qr_2x2(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     
     return Q, R
 
-"""Analytical 3x3 QR decomposition (Modified Gram-Schmidt)."""
-# Optimized scalar math to avoid NumPy overhead for 3x3
+
 def qr_3x3(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Analytical 3x3 QR decomposition (Modified Gram-Schmidt)."""
     # Pre-extract elements for speed
     a00, a10, a20 = A[0, 0], A[1, 0], A[2, 0]
     a01, a11, a21 = A[0, 1], A[1, 1], A[2, 1]
@@ -105,11 +160,17 @@ def integrate(
     y0: ArrayLike,
     method: str = 'RK4'
 ):
-    """
-    Integrate an ODE system (state only) using a fixed time step.
-    """
-    if method != 'RK4':
-        raise ValueError(f"Method {method} is not supported.")
+    """Integrate an ODE system (state only) using a fixed time step."""
+    methods = {
+        'RK1': rk1_step,
+        'RK2': rk2_step,
+        'RK3': rk3_step,
+        'RK4': rk4_step
+    }
+    if method not in methods:
+        raise ValueError(f"Method {method} is not supported. Choose from {list(methods.keys())}.")
+    
+    step_func = methods[method]
 
     t_eval = np.arange(t_span[0], t_span[1], dt)
     n_steps = len(t_eval)
@@ -118,12 +179,12 @@ def integrate(
 
     # 1. Burn transients
     for _ in np.arange(0, t_span[0], dt):
-        y = rk4_step(f, dt, y)
+        y = step_func(f, dt, y)
 
     # 2. Integration loop
     for i in range(n_steps):
         y_eval[i] = y
-        y = rk4_step(f, dt, y)
+        y = step_func(f, dt, y)
 
     return y_eval
 
@@ -134,17 +195,32 @@ def integrate_variational(
     t_span: tuple[float, float],
     y0: ArrayLike,
     Phi0: np.ndarray,
+    method: str = 'RK4',
     qr_method: str = 'householder'
 ):
-    """
-    Integrate both state and variational equations to compute fundamental solutions.
-    """
+    """Integrate both state and variational equations to compute fundamental solutions."""
+    methods = {
+        'RK1': rk1_step_variational,
+        'RK2': rk2_step_variational,
+        'RK3': rk3_step_variational,
+        'RK4': rk4_step_variational
+    }
+    if method not in methods:
+        raise ValueError(f"Method {method} is not supported. Choose from {list(methods.keys())}.")
+
+    step_func = methods[method]
+
     t_eval = np.arange(t_span[0], t_span[1], dt)
     n_steps = len(t_eval)
     
     y = np.asarray(y0, dtype=float)
     Phi = np.asarray(Phi0, dtype=float)
     dim = Phi.shape[0]
+
+    y_eval = np.zeros((n_steps,) + y.shape)
+    Phi_eval = np.zeros((n_steps,) + Phi.shape)
+    Q_eval = np.zeros((n_steps,) + Phi.shape)
+    R_eval = np.zeros((n_steps,) + Phi.shape)
 
     # Determine QR function once
     qr_func = qr_2x2 if (qr_method == 'gram-schmidt' and dim == 2) else \
@@ -154,19 +230,14 @@ def integrate_variational(
     # 1. Burn transients (tracked)
     for _ in np.arange(0, t_span[0], dt):
         Q, _ = qr_func(Phi)
-        y, Phi = rk4_step_variational(f, dt, y, Q)
+        y, Phi = step_func(f, dt, y, Q)
 
     # 2. Main integration loop (tracked)
-    y_eval = np.zeros((n_steps,) + y.shape)
-    Phi_eval = np.zeros((n_steps,) + Phi.shape)
-    Q_eval = np.zeros((n_steps,) + Phi.shape)
-    R_eval = np.zeros((n_steps,) + Phi.shape)
-
     for i in range(n_steps):
         y_eval[i] = y
         Q, R = qr_func(Phi)
         Phi_eval[i], Q_eval[i], R_eval[i] = Phi, Q, R
-        y, Phi = rk4_step_variational(f, dt, y, Q)
+        y, Phi = step_func(f, dt, y, Q)
 
     return y_eval, Phi_eval, Q_eval, R_eval
 
@@ -174,20 +245,7 @@ def integrate_variational(
 def local_lyapunov_exponents(Q_history: np.ndarray, J_history: np.ndarray) -> np.ndarray:
     """
     Compute the local Lyapunov exponents from the continuous QR formulation.
-    
     Formula: chi_i(t) = (Q^T(t) * J(t) * Q(t))_ii
-    
-    Parameters
-    ----------
-    Q_history : np.ndarray
-        Orthogonal matrices from the QR decomposition history, shape (N, dim, dim).
-    J_history : np.ndarray
-        Jacobian matrices along the trajectory history, shape (N, dim, dim).
-        
-    Returns
-    -------
-    local_lyap : np.ndarray
-        Time series of local Lyapunov exponents, shape (N, dim).
     """
     # Batched matrix multiplication: Q^T @ J @ Q
     # Q_history.transpose(0, 2, 1) gives the transpose of each Q matrix in the stack
@@ -197,21 +255,7 @@ def local_lyapunov_exponents(Q_history: np.ndarray, J_history: np.ndarray) -> np
 
 
 def continuous_qr_spectrum(Q_history: np.ndarray, J_history: np.ndarray) -> np.ndarray:
-    """
-    Compute the Lyapunov spectrum using the continuous QR formulation with a simple mean.
-    
-    Parameters
-    ----------
-    Q_history : np.ndarray
-        Orthogonal matrices from the QR decomposition history, shape (N, dim, dim).
-    J_history : np.ndarray
-        Jacobian matrices along the trajectory history, shape (N, dim, dim).
-        
-    Returns
-    -------
-    spectrum : np.ndarray
-        The calculated Lyapunov exponents, shape (dim,).
-    """
+    """Compute the Lyapunov spectrum using the continuous QR formulation with a simple mean."""
     local_lyap = local_lyapunov_exponents(Q_history, J_history)
     return np.mean(local_lyap, axis=0)
 
@@ -219,26 +263,11 @@ def continuous_qr_spectrum(Q_history: np.ndarray, J_history: np.ndarray) -> np.n
 def discrete_qr_spectrum(R_history: np.ndarray, dt: float) -> np.ndarray:
     """
     Compute the Lyapunov spectrum from the discrete QR formulation (history of R matrices).
-    
     Formula: lambda_i = 1/(N*dt) * sum(ln|R_ii|)
-    
-    Parameters
-    ----------
-    R_history : np.ndarray
-        Stack of upper triangular matrices from QR decompositions, shape (N, dim, dim).
-    dt : float
-        Time step used in the integration.
-    burn_in : int, optional
-        Number of initial steps to discard as transients (default: 1000).
-        
-    Returns
-    -------
-    spectrum : np.ndarray
-        The calculated Lyapunov exponents, shape (dim,).
     """
     # Extract the diagonal elements for each R matrix
     R_diag = np.diagonal(R_history, axis1=1, axis2=2)
-    # Compute the mean log of the absolute diagonal elements, skipping burn-in
+    # Compute the mean log of the absolute diagonal elements
     return np.mean(np.log(np.abs(R_diag)), axis=0) / dt
 
 
@@ -249,20 +278,17 @@ def matrix_exponential_spectrum(
 ) -> np.ndarray:
     """
     Compute the Lyapunov spectrum using the Matrix Exponential formulation.
-    
     Formula: Q_next, R_next = QR( exp(J*dt) @ Q_current )
-    
+
     Parameters
     ----------
     J_history : np.ndarray
         Jacobian matrices along the trajectory, shape (N, dim, dim).
     dt : float
-        Time step used in the integration.
-    qr_method : str, optional
-        QR decomposition method. 'householder' (default) or 'gram-schmidt'.
-    burn_in : int, optional
-        Number of initial steps to discard as transients (default: 1000).
-        
+        Time step.
+    qr_method : str
+        QR decomposition method.
+
     Returns
     -------
     spectrum : np.ndarray
@@ -272,7 +298,6 @@ def matrix_exponential_spectrum(
     Q = np.eye(dim)
     R_diags = np.zeros((n_steps, dim))
     
-    # Determine QR function once
     qr_func = qr_2x2 if (qr_method == 'gram-schmidt' and dim == 2) else \
               qr_3x3 if (qr_method == 'gram-schmidt' and dim == 3) else \
               np.linalg.qr
