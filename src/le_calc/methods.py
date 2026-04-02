@@ -4,7 +4,7 @@ methods.py — methods for calculating Lyapunov exponents
 
 import numpy as np
 from scipy.linalg import expm
-from .utils import qr_2x2, qr_3x3
+from .utils import qr_GS_2x2, qr_GS_3x3, qr_HH
 
 
 def local_lyapunov_exponents(Q_history: np.ndarray, J_history: np.ndarray) -> np.ndarray:
@@ -63,9 +63,9 @@ def matrix_exponential_spectrum(
     Q = np.eye(dim)
     R_diags = np.zeros((n_steps, dim))
     
-    qr_func = qr_2x2 if (qr_method == 'gram-schmidt' and dim == 2) else \
-              qr_3x3 if (qr_method == 'gram-schmidt' and dim == 3) else \
-              np.linalg.qr
+    qr_func = qr_GS_2x2 if (qr_method == 'gram-schmidt' and dim == 2) else \
+              qr_GS_3x3 if (qr_method == 'gram-schmidt' and dim == 3) else \
+              qr_HH
 
     for i in range(n_steps):
         # Evolution of the tangent space via matrix exponential

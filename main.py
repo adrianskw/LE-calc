@@ -117,4 +117,4 @@ def run_lorenz_benchmarks():
 
 if __name__ == "__main__":
     run_discrete_map_benchmarks()
-    run_lorenz_benchmarks()
+    # run_lorenz_benchmarks()

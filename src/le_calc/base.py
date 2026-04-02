@@ -15,6 +15,12 @@ class DynamicalSystem:
         Trajectory of the system, shape (n_steps, dim).
     J : np.ndarray
         Jacobian matrices along the trajectory, shape (n_steps, dim, dim).
+    phi : np.ndarray
+        Calculated fundamental matrices, shape (n_steps, dim, dim).
+    Q : np.ndarray
+        Orthogonal matrices from QR decomposition, shape (n_steps, dim, dim).
+    R : np.ndarray
+        Upper triangular matrices from QR decomposition, shape (n_steps, dim, dim).
     lyapunov_spectrum : np.ndarray
         Calculated Lyapunov exponents, shape (dim,).
     jit_enabled : bool
@@ -34,11 +40,8 @@ class DynamicalSystem:
         self.jit_enabled = HAS_NUMBA
 
         # Centralized JIT lifecycle
-        if self.jit_enabled:
-            if hasattr(self, '_setup_jit_functions'):
-                self._setup_jit_functions()
-            if eager_compile:
-                self.compile()
+        if self.jit_enabled and eager_compile:
+            self.compile()
 
     def compile(self) -> None:
         """
@@ -48,18 +51,17 @@ class DynamicalSystem:
         if not self.jit_enabled:
             return
 
-        # 1. Ensure JIT handles are created
-        if hasattr(self, '_setup_jit_functions') and not hasattr(self, '_ode_jit') and not hasattr(self, '_forward_jit'):
-            self._setup_jit_functions()
-
-        # 2. Warm up basic function handles if they exist
+        # 1. Warm up basic function handles if they exist
         dummy_x = np.ones(self.dim)
-        for attr in ['_ode_jit', '_forward_jit', '_jac_jit']:
+        for attr in ['forward_map', '_ode_jit', '_jac_jit']:
             if hasattr(self, attr):
                 handle = getattr(self, attr)
-                _ = handle(dummy_x)
+                try:
+                    _ = handle(dummy_x)
+                except:
+                    pass
 
-        # 3. Trigger simulation loop compilation (subclass-specific)
+        # 2. Trigger simulation loop compilation (subclass-specific)
         self._warmup_simulation()
 
     def _warmup_simulation(self) -> None:
@@ -75,6 +77,11 @@ class DynamicalSystem:
                     self.simulate_var(dt=0.01, t_span=(0, 0.01), x0=dummy_x, Phi0=np.eye(self.dim), method=m)
         
         # Map Path
-        elif hasattr(self, '_forward_jit'):
-            # simulate(x0, n_steps)
-            self.simulate(x0=dummy_x, n_steps=1)
+        else:
+            # For discrete maps, simulate is a Python method that uses a JIT loop internally.
+            self._warmup_specific()
+
+    def _warmup_specific(self) -> None:
+        """Subclass-specific warmup hook for complex kernels (e.g. spectrum)."""
+        dummy_x = np.ones(self.dim)
+        self.simulate(x0=dummy_x, n_steps=1)

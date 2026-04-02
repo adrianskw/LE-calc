@@ -13,7 +13,7 @@ used via the RK_METHODS / RK_VAR_METHODS lookup tables in utils.py.
 
 import numpy as np
 from .base import DynamicalSystem
-from .utils import njit, qr_2x2, qr_3x3, RK_METHODS, RK_VAR_METHODS
+from .utils import njit, qr_GS_2x2, qr_GS_3x3, qr_HH, RK_METHODS, RK_VAR_METHODS
 
 
 class ODEs(DynamicalSystem):
@@ -125,12 +125,9 @@ class ODEs(DynamicalSystem):
         """
         step_func, ode_func, jac_func = self._get_simulation_handles(method, is_var=True)
 
-        if qr_method == 'gram-schmidt' and self.dim == 2:
-            qr_func = qr_2x2
-        elif qr_method == 'gram-schmidt' and self.dim == 3:
-            qr_func = qr_3x3
-        else:
-            qr_func = np.linalg.qr
+        qr_func =   qr_GS_2x2 if (qr_method == 'gram-schmidt' and self.dim == 2) else \
+                    qr_GS_3x3 if (qr_method == 'gram-schmidt' and self.dim == 3) else \
+                    qr_HH
 
         t_eval = np.arange(t_span[0], t_span[1], dt)
         self.n_steps = len(t_eval)

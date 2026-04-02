@@ -25,7 +25,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 @njit
-def qr_2x2(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def qr_GS_2x2(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Analytical 2x2 QR decomposition (Modified Gram-Schmidt)."""
     a00, a10 = A[0, 0], A[1, 0]
     r11 = np.sqrt(a00*a00 + a10*a10)
@@ -35,7 +35,7 @@ def qr_2x2(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     r12 = q00 * a01 + q10 * a11
 
     q01, q11 = -q10, q00
-    r22 = np.abs(q01 * a01 + q11 * a11)
+    r22 = q01 * a01 + q11 * a11
 
     Q = np.empty((2, 2))
     Q[0, 0], Q[1, 0] = q00, q10
@@ -48,7 +48,7 @@ def qr_2x2(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 @njit
-def qr_3x3(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def qr_GS_3x3(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Analytical 3x3 QR decomposition (Modified Gram-Schmidt)."""
     a00, a10, a20 = A[0, 0], A[1, 0], A[2, 0]
     a01, a11, a21 = A[0, 1], A[1, 1], A[2, 1]
@@ -85,6 +85,10 @@ def qr_3x3(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
     return Q, R
 
+@njit
+def qr_HH(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """JIT-compiled wrapper for np.linalg.qr."""
+    return np.linalg.qr(A)
 
 # ---------------------------------------------------------------------------
 # Runge-Kutta steppers — JIT-compiled versions
