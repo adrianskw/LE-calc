@@ -28,17 +28,20 @@ class DiscreteMap(DynamicalSystem):
         """Compute x_{n+1} = f(x_n)."""
         raise NotImplementedError
 
-    def jac(self, x: np.ndarray) -> np.ndarray:
+    def jac(self, x: np.ndarray = None) -> np.ndarray:
         """
-        Compute the analytical Jacobian J(x) = df/dx at a single state.
+        Compute the analytical Jacobian J(x) = df/dx at a single state or batch.
 
         Parameters
         ----------
-        x : np.ndarray, shape (dim,)
+        x : np.ndarray, optional
+            The state(s) at which to compute the Jacobian. 
+            If None (default), uses the stored trajectory self.x.
 
         Returns
         -------
-        J : np.ndarray, shape (dim, dim)
+        J : np.ndarray
+            Jacobian matrix (dim, dim) or batch of matrices (n, dim, dim).
         """
         raise NotImplementedError
 
@@ -83,7 +86,7 @@ class DiscreteMap(DynamicalSystem):
         -------
         spectrum : np.ndarray, shape (dim,)
         """
-        self.calc_jac()
+        self.J = self.jac(self.x)
 
         # 1-D fast path: vectorised log-sum
         if self.dim == 1:
@@ -138,8 +141,16 @@ class LogisticMap(DiscreteMap):
     def forward_map(self, x: np.ndarray) -> np.ndarray:
         return np.array([self.r * x[0] * (1.0 - x[0])])
 
-    def jac(self, x: np.ndarray) -> np.ndarray:
-        return np.array([[self.r * (1.0 - 2.0 * x[0])]])
+    def jac(self, x: np.ndarray = None) -> np.ndarray:
+        if x is None:
+            x = self.x
+        x = np.asarray(x)
+        if x.ndim == 1:
+            return np.array([[self.r * (1.0 - 2.0 * x[0])]])
+        else:
+            # Batch case: (n, 1) -> (n, 1, 1)
+            res = self.r * (1.0 - 2.0 * x)
+            return res[:, :, np.newaxis]
 
 
 class HenonMap(DiscreteMap):
@@ -173,6 +184,18 @@ class HenonMap(DiscreteMap):
     def forward_map(self, x: np.ndarray) -> np.ndarray:
         return np.array([1.0 - self.a * x[0]**2 + x[1], self.b * x[0]])
 
-    def jac(self, x: np.ndarray) -> np.ndarray:
-        return np.array([[-2.0 * self.a * x[0], 1.0],
-                         [self.b,               0.0]])
+    def jac(self, x: np.ndarray = None) -> np.ndarray:
+        if x is None:
+            x = self.x
+        x = np.asarray(x)
+        if x.ndim == 1:
+            return np.array([[-2.0 * self.a * x[0], 1.0],
+                             [self.b,               0.0]])
+        else:
+            # Batch case: (n, 2) -> (n, 2, 2)
+            n = x.shape[0]
+            J = np.zeros((n, 2, 2))
+            J[:, 0, 0] = -2.0 * self.a * x[:, 0]
+            J[:, 0, 1] = 1.0
+            J[:, 1, 0] = self.b
+            return J

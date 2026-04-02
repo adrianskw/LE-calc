@@ -43,6 +43,26 @@ class ODEs(DynamicalSystem):
         """
         raise NotImplementedError
 
+    def calc_jac(self) -> np.ndarray:
+        """
+        Compute and store the Jacobian matrices along the stored trajectory.
+
+        Iterates over self.x, calling self.jac(state) for each 1D state and
+        storing the result in self.J with shape (n_steps, dim, dim).
+
+        Returns
+        -------
+        self.J : np.ndarray, shape (n_steps, dim, dim)
+        """
+        self.J = np.empty((self.n_steps, self.dim, self.dim))
+        
+        # Use JIT-compiled jac if available and JIT is enabled
+        jac_func = getattr(self, '_jac_jit', self.jac) if self.jit_enabled else self.jac
+        
+        for i in range(self.n_steps):
+            self.J[i] = jac_func(self.x[i])
+        return self.J
+
     def _get_simulation_handles(self, method: str, is_var: bool = False):
         """
         Helper to select the correct stepper and function handles based on JIT status.
