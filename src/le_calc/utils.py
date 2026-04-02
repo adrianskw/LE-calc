@@ -1,122 +1,55 @@
 """
 utils.py — Shared utilities that are often called and should be optimized.
+
+JIT compilation is handled via Numba's @njit. A no-op fallback is provided
+so the module remains importable without Numba installed. The HAS_NUMBA flag
+allows callers to branch on actual availability.
 """
 
 import numpy as np
-from numpy.typing import ArrayLike
-from scipy.linalg import expm
+
+try:
+    from numba import njit
+    HAS_NUMBA = True
+except ImportError:
+    HAS_NUMBA = False
+    def njit(func=None, **kwargs):
+        """No-op decorator: returns the function unchanged when Numba is absent."""
+        if func is not None:
+            return func          # @njit without arguments
+        return lambda f: f       # @njit(...) with arguments
 
 
-def rk1_step(model, dt: float, y: np.ndarray) -> np.ndarray:
-    """Take a single Forward Euler (RK1) step for the state only."""
-    return y + dt * model.ode(y)
+# ---------------------------------------------------------------------------
+# Analytical QR decompositions (Gram-Schmidt, small fixed dimensions)
+# ---------------------------------------------------------------------------
 
-
-def rk1_step_variational(model, dt: float, y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Take a single Forward Euler (RK1) step for both state and variational equation."""
-    y_next = y   + dt * model.ode(y)
-    Phi_next = Phi + dt * (model.jac(y) @ Phi)
-    return y_next, Phi_next
-
-
-def rk2_step(model, dt: float, y: np.ndarray) -> np.ndarray:
-    """Take a single Midpoint (RK2) step for the state only."""
-    k1 = model.ode(y)
-    k2 = model.ode(y + 0.5 * dt * k1)
-    return y + dt * k2
-
-
-def rk2_step_variational(model, dt: float, y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Take a single Midpoint (RK2) step for both state and variational equation."""
-    k1 = model.ode(y)
-    L1 = model.jac(y) @ Phi
-
-    k2 = model.ode(y + 0.5 * dt * k1)
-    L2 = model.jac(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
-
-    y_next = y   + dt * k2
-    Phi_next = Phi + dt * L2
-    return y_next, Phi_next
-
-
-def rk3_step(model, dt: float, y: np.ndarray) -> np.ndarray:
-    """Take a single Heun's 3rd order (RK3) step for the state only."""
-    k1 = model.ode(y)
-    k2 = model.ode(y + 0.5 * dt * k1)
-    k3 = model.ode(y - dt * k1 + 2.0 * dt * k2)
-    return y + (dt / 6.0) * (k1 + 4.0 * k2 + k3)
-
-
-def rk3_step_variational(model, dt: float, y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Take a single Heun's 3rd order (RK3) step for both state and variational equation."""
-    k1 = model.ode(y)
-    L1 = model.jac(y) @ Phi
-
-    k2 = model.ode(y + 0.5 * dt * k1)
-    L2 = model.jac(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
-
-    k3 = model.ode(y - dt * k1 + 2.0 * dt * k2)
-    L3 = model.jac(y - dt * k1 + 2.0 * dt * k2) @ (Phi - dt * L1 + 2.0 * dt * L2)
-
-    y_next = y   + (dt / 6.0) * (k1 + 4.0 * k2 + k3)
-    Phi_next = Phi + (dt / 6.0) * (L1 + 4.0 * L2 + L3)
-    return y_next, Phi_next
-
-
-def rk4_step(model, dt: float, y: np.ndarray) -> np.ndarray:
-    """Take a single Runge-Kutta 4th order step for the state only."""
-    k1 = model.ode(y)
-    k2 = model.ode(y + (dt / 2.0) * k1)
-    k3 = model.ode(y + (dt / 2.0) * k2)
-    k4 = model.ode(y + dt * k3)
-    return y + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-
-
-def rk4_step_variational(model, dt: float, y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Take a single Runge-Kutta 4th order step for both state and variational equation."""
-    # State stages
-    k1 = model.ode(y)
-    k2 = model.ode(y + (dt / 2.0) * k1)
-    k3 = model.ode(y + (dt / 2.0) * k2)
-    k4 = model.ode(y + dt * k3)
-
-    # Variational stages (dPhi/dt = J(x) @ Phi)
-    L1 = model.jac(y)                   @  Phi
-    L2 = model.jac(y + (dt / 2.0) * k1) @ (Phi + (dt / 2.0) * L1)
-    L3 = model.jac(y + (dt / 2.0) * k2) @ (Phi + (dt / 2.0) * L2)
-    L4 = model.jac(y +  dt        * k3) @ (Phi +  dt        * L3)
-
-    y_next = y   + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-    Phi_next = Phi + (dt / 6.0) * (L1 + 2.0 * L2 + 2.0 * L3 + L4)
-    return y_next, Phi_next
-
-
+@njit
 def qr_2x2(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Analytical 2x2 QR decomposition (Modified Gram-Schmidt)."""
     a00, a10 = A[0, 0], A[1, 0]
     r11 = np.sqrt(a00*a00 + a10*a10)
     q00, q10 = a00 / r11, a10 / r11
-    
+
     a01, a11 = A[0, 1], A[1, 1]
     r12 = q00 * a01 + q10 * a11
-    
-    # q2 is the orthogonal vector to q1
+
     q01, q11 = -q10, q00
     r22 = np.abs(q01 * a01 + q11 * a11)
-    
+
     Q = np.empty((2, 2))
     Q[0, 0], Q[1, 0] = q00, q10
     Q[0, 1], Q[1, 1] = q01, q11
-    
+
     R = np.zeros((2, 2))
     R[0, 0], R[0, 1], R[1, 1] = r11, r12, r22
-    
+
     return Q, R
 
 
+@njit
 def qr_3x3(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Analytical 3x3 QR decomposition (Modified Gram-Schmidt)."""
-    # Pre-extract elements for speed
     a00, a10, a20 = A[0, 0], A[1, 0], A[2, 0]
     a01, a11, a21 = A[0, 1], A[1, 1], A[2, 1]
     a02, a12, a22 = A[0, 2], A[1, 2], A[2, 2]
@@ -134,9 +67,9 @@ def qr_3x3(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     # Column 3
     r13 = q00*a02 + q10*a12 + q20*a22
     r23 = q01*a02 + q11*a12 + q21*a22
-    v02, v12, v22 = a02 - r13*q00 - r23*q01, \
-                    a12 - r13*q10 - r23*q11, \
-                    a22 - r13*q20 - r23*q21
+    v02, v12, v22 = (a02 - r13*q00 - r23*q01,
+                     a12 - r13*q10 - r23*q11,
+                     a22 - r13*q20 - r23*q21)
     r33 = np.sqrt(v02*v02 + v12*v12 + v22*v22)
     q02, q12, q22 = v02 / r33, v12 / r33, v22 / r33
 
@@ -153,160 +86,164 @@ def qr_3x3(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return Q, R
 
 
-def integrate(
-    f,
-    dt: float,
-    t_span: tuple[float, float],
-    y0: ArrayLike,
-    method: str = 'RK4'
-):
-    """Integrate an ODE system (state only) using a fixed time step."""
-    methods = {
-        'RK1': rk1_step,
-        'RK2': rk2_step,
-        'RK3': rk3_step,
-        'RK4': rk4_step
-    }
-    if method not in methods:
-        raise ValueError(f"Method {method} is not supported. Choose from {list(methods.keys())}.")
-    
-    step_func = methods[method]
+# ---------------------------------------------------------------------------
+# Runge-Kutta steppers — JIT-compiled versions
+# All accept (ode_func, dt, y) or (ode_func, jac_func, dt, y, Phi).
+# ---------------------------------------------------------------------------
 
-    t_eval = np.arange(t_span[0], t_span[1], dt)
-    n_steps = len(t_eval)
-    y = np.asarray(y0, dtype=float)
-    y_eval = np.zeros((n_steps,) + y.shape)
-
-    # 1. Burn transients
-    for _ in np.arange(0, t_span[0], dt):
-        y = step_func(f, dt, y)
-
-    # 2. Integration loop
-    for i in range(n_steps):
-        y_eval[i] = y
-        y = step_func(f, dt, y)
-
-    return y_eval
+@njit
+def rk1(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
+    """Forward Euler (RK1) step."""
+    return y + dt * ode_func(y)
 
 
-def integrate_variational(
-    f,
-    dt: float,
-    t_span: tuple[float, float],
-    y0: ArrayLike,
-    Phi0: np.ndarray,
-    method: str = 'RK4',
-    qr_method: str = 'householder'
-):
-    """Integrate both state and variational equations to compute fundamental solutions."""
-    methods = {
-        'RK1': rk1_step_variational,
-        'RK2': rk2_step_variational,
-        'RK3': rk3_step_variational,
-        'RK4': rk4_step_variational
-    }
-    if method not in methods:
-        raise ValueError(f"Method {method} is not supported. Choose from {list(methods.keys())}.")
-
-    step_func = methods[method]
-
-    t_eval = np.arange(t_span[0], t_span[1], dt)
-    n_steps = len(t_eval)
-    
-    y = np.asarray(y0, dtype=float)
-    Phi = np.asarray(Phi0, dtype=float)
-    dim = Phi.shape[0]
-
-    y_eval = np.zeros((n_steps,) + y.shape)
-    Phi_eval = np.zeros((n_steps,) + Phi.shape)
-    Q_eval = np.zeros((n_steps,) + Phi.shape)
-    R_eval = np.zeros((n_steps,) + Phi.shape)
-
-    # Determine QR function once
-    qr_func = qr_2x2 if (qr_method == 'gram-schmidt' and dim == 2) else \
-              qr_3x3 if (qr_method == 'gram-schmidt' and dim == 3) else \
-              np.linalg.qr
-
-    # 1. Burn transients (tracked)
-    for _ in np.arange(0, t_span[0], dt):
-        Q, _ = qr_func(Phi)
-        y, Phi = step_func(f, dt, y, Q)
-
-    # 2. Main integration loop (tracked)
-    for i in range(n_steps):
-        y_eval[i] = y
-        Q, R = qr_func(Phi)
-        Phi_eval[i], Q_eval[i], R_eval[i] = Phi, Q, R
-        y, Phi = step_func(f, dt, y, Q)
-
-    return y_eval, Phi_eval, Q_eval, R_eval
+@njit
+def rk1_var(ode_func, jac_func, dt: float,
+            y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Forward Euler (RK1) step for state + variational equation."""
+    k1 = ode_func(y)
+    L1 = jac_func(y) @ Phi
+    return y + dt * k1, Phi + dt * L1
 
 
-def local_lyapunov_exponents(Q_history: np.ndarray, J_history: np.ndarray) -> np.ndarray:
-    """
-    Compute the local Lyapunov exponents from the continuous QR formulation.
-    Formula: chi_i(t) = (Q^T(t) * J(t) * Q(t))_ii
-    """
-    # Batched matrix multiplication: Q^T @ J @ Q
-    # Q_history.transpose(0, 2, 1) gives the transpose of each Q matrix in the stack
-    QTJQ = Q_history.transpose(0, 2, 1) @ J_history @ Q_history
-    # Extract the diagonal elements for each time step
-    return np.diagonal(QTJQ, axis1=1, axis2=2)
+@njit
+def rk2(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
+    """Midpoint (RK2) step."""
+    k1 = ode_func(y)
+    k2 = ode_func(y + 0.5 * dt * k1)
+    return y + dt * k2
 
 
-def continuous_qr_spectrum(Q_history: np.ndarray, J_history: np.ndarray) -> np.ndarray:
-    """Compute the Lyapunov spectrum using the continuous QR formulation with a simple mean."""
-    local_lyap = local_lyapunov_exponents(Q_history, J_history)
-    return np.mean(local_lyap, axis=0)
+@njit
+def rk2_var(ode_func, jac_func, dt: float,
+            y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Midpoint (RK2) step for state + variational equation."""
+    k1 = ode_func(y)
+    L1 = jac_func(y) @ Phi
+    k2 = ode_func(y + 0.5 * dt * k1)
+    L2 = jac_func(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
+    return y + dt * k2, Phi + dt * L2
 
 
-def discrete_qr_spectrum(R_history: np.ndarray, dt: float) -> np.ndarray:
-    """
-    Compute the Lyapunov spectrum from the discrete QR formulation (history of R matrices).
-    Formula: lambda_i = 1/(N*dt) * sum(ln|R_ii|)
-    """
-    # Extract the diagonal elements for each R matrix
-    R_diag = np.diagonal(R_history, axis1=1, axis2=2)
-    # Compute the mean log of the absolute diagonal elements
-    return np.mean(np.log(np.abs(R_diag)), axis=0) / dt
+@njit
+def rk3(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
+    """Heun's 3rd-order (RK3) step."""
+    k1 = ode_func(y)
+    k2 = ode_func(y + 0.5 * dt * k1)
+    k3 = ode_func(y - dt * k1 + 2.0 * dt * k2)
+    return y + (dt / 6.0) * (k1 + 4.0 * k2 + k3)
 
 
-def matrix_exponential_spectrum(
-    J_history: np.ndarray, 
-    dt: float, 
-    qr_method: str = 'householder'
-) -> np.ndarray:
-    """
-    Compute the Lyapunov spectrum using the Matrix Exponential formulation.
-    Formula: Q_next, R_next = QR( exp(J*dt) @ Q_current )
+@njit
+def rk3_var(ode_func, jac_func, dt: float,
+            y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Heun's 3rd-order (RK3) step for state + variational equation."""
+    k1 = ode_func(y)
+    L1 = jac_func(y) @ Phi
+    k2 = ode_func(y + 0.5 * dt * k1)
+    L2 = jac_func(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
+    k3 = ode_func(y - dt * k1 + 2.0 * dt * k2)
+    L3 = jac_func(y - dt * k1 + 2.0 * dt * k2) @ (Phi - dt * L1 + 2.0 * dt * L2)
+    y_next = y + (dt / 6.0) * (k1 + 4.0 * k2 + k3)
+    Phi_next = Phi + (dt / 6.0) * (L1 + 4.0 * L2 + L3)
+    return y_next, Phi_next
 
-    Parameters
-    ----------
-    J_history : np.ndarray
-        Jacobian matrices along the trajectory, shape (N, dim, dim).
-    dt : float
-        Time step.
-    qr_method : str
-        QR decomposition method.
 
-    Returns
-    -------
-    spectrum : np.ndarray
-        The calculated Lyapunov exponents, shape (dim,).
-    """
-    n_steps, dim, _ = J_history.shape
-    Q = np.eye(dim)
-    R_diags = np.zeros((n_steps, dim))
-    
-    qr_func = qr_2x2 if (qr_method == 'gram-schmidt' and dim == 2) else \
-              qr_3x3 if (qr_method == 'gram-schmidt' and dim == 3) else \
-              np.linalg.qr
+@njit
+def rk4(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
+    """Classic Runge-Kutta 4th-order (RK4) step."""
+    k1 = ode_func(y)
+    k2 = ode_func(y + 0.5 * dt * k1)
+    k3 = ode_func(y + 0.5 * dt * k2)
+    k4 = ode_func(y + dt * k3)
+    return y + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
-    for i in range(n_steps):
-        # Evolution of the tangent space via matrix exponential
-        M = expm(dt * J_history[i])
-        Q, R = qr_func(M @ Q)
-        R_diags[i] = np.diagonal(R)
-        
-    # Return spectrum via mean log-diagonal of R
-    return np.mean(np.log(np.abs(R_diags)), axis=0) / dt
+
+@njit
+def rk4_var(ode_func, jac_func, dt: float,
+            y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Classic Runge-Kutta 4th-order (RK4) step for state + variational equation."""
+    k1 = ode_func(y)
+    L1 = jac_func(y) @ Phi
+    k2 = ode_func(y + 0.5 * dt * k1)
+    L2 = jac_func(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
+    k3 = ode_func(y + 0.5 * dt * k2)
+    L3 = jac_func(y + 0.5 * dt * k2) @ (Phi + 0.5 * dt * L2)
+    k4 = ode_func(y + dt * k3)
+    L4 = jac_func(y + dt * k3) @ (Phi + dt * L3)
+    y_next = y + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+    Phi_next = Phi + (dt / 6.0) * (L1 + 2.0 * L2 + 2.0 * L3 + L4)
+    return y_next, Phi_next
+
+
+# ---------------------------------------------------------------------------
+# Plain-Python stepper wrappers
+# Used when jit_enabled=False so we never rely on .py_func (which only
+# exists on real Numba-compiled functions, not the no-op fallback).
+# ---------------------------------------------------------------------------
+
+def _rk1_py(ode_func, dt, y):
+    return y + dt * ode_func(y)
+
+def _rk1_var_py(ode_func, jac_func, dt, y, Phi):
+    k1 = ode_func(y);  L1 = jac_func(y) @ Phi
+    return y + dt * k1, Phi + dt * L1
+
+def _rk2_py(ode_func, dt, y):
+    k1 = ode_func(y)
+    k2 = ode_func(y + 0.5 * dt * k1)
+    return y + dt * k2
+
+def _rk2_var_py(ode_func, jac_func, dt, y, Phi):
+    k1 = ode_func(y);  L1 = jac_func(y) @ Phi
+    k2 = ode_func(y + 0.5 * dt * k1)
+    L2 = jac_func(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
+    return y + dt * k2, Phi + dt * L2
+
+def _rk3_py(ode_func, dt, y):
+    k1 = ode_func(y)
+    k2 = ode_func(y + 0.5 * dt * k1)
+    k3 = ode_func(y - dt * k1 + 2.0 * dt * k2)
+    return y + (dt / 6.0) * (k1 + 4.0 * k2 + k3)
+
+def _rk3_var_py(ode_func, jac_func, dt, y, Phi):
+    k1 = ode_func(y);  L1 = jac_func(y) @ Phi
+    k2 = ode_func(y + 0.5 * dt * k1)
+    L2 = jac_func(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
+    k3 = ode_func(y - dt * k1 + 2.0 * dt * k2)
+    L3 = jac_func(y - dt * k1 + 2.0 * dt * k2) @ (Phi - dt * L1 + 2.0 * dt * L2)
+    return y + (dt / 6.0) * (k1 + 4.0 * k2 + k3), Phi + (dt / 6.0) * (L1 + 4.0 * L2 + L3)
+
+def _rk4_py(ode_func, dt, y):
+    k1 = ode_func(y)
+    k2 = ode_func(y + 0.5 * dt * k1)
+    k3 = ode_func(y + 0.5 * dt * k2)
+    k4 = ode_func(y + dt * k3)
+    return y + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+def _rk4_var_py(ode_func, jac_func, dt, y, Phi):
+    k1 = ode_func(y);  L1 = jac_func(y) @ Phi
+    k2 = ode_func(y + 0.5 * dt * k1)
+    L2 = jac_func(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
+    k3 = ode_func(y + 0.5 * dt * k2)
+    L3 = jac_func(y + 0.5 * dt * k2) @ (Phi + 0.5 * dt * L2)
+    k4 = ode_func(y + dt * k3)
+    L4 = jac_func(y + dt * k3) @ (Phi + dt * L3)
+    return (y  + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4),
+            Phi + (dt / 6.0) * (L1 + 2.0 * L2 + 2.0 * L3 + L4))
+
+
+# Lookup tables: method name → (jit_stepper, py_stepper)
+RK_METHODS = {
+    'RK1': (rk1, _rk1_py),
+    'RK2': (rk2, _rk2_py),
+    'RK3': (rk3, _rk3_py),
+    'RK4': (rk4, _rk4_py),
+}
+
+RK_VAR_METHODS = {
+    'RK1': (rk1_var, _rk1_var_py),
+    'RK2': (rk2_var, _rk2_var_py),
+    'RK3': (rk3_var, _rk3_var_py),
+    'RK4': (rk4_var, _rk4_var_py),
+}
