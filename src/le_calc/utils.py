@@ -24,7 +24,7 @@ except ImportError:
 # Analytical QR decompositions (Gram-Schmidt, small fixed dimensions)
 # ---------------------------------------------------------------------------
 
-@njit
+@njit(cache=True)
 def qr_GS_2x2(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Analytical 2x2 QR decomposition (Modified Gram-Schmidt)."""
     a00, a10 = A[0, 0], A[1, 0]
@@ -47,7 +47,7 @@ def qr_GS_2x2(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return Q, R
 
 
-@njit
+@njit(cache=True)
 def qr_GS_3x3(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Analytical 3x3 QR decomposition (Modified Gram-Schmidt)."""
     a00, a10, a20 = A[0, 0], A[1, 0], A[2, 0]
@@ -85,32 +85,19 @@ def qr_GS_3x3(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
     return Q, R
 
-@njit
+@njit(cache=True)
 def qr_HH(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """JIT-compiled wrapper for np.linalg.qr."""
     return np.linalg.qr(A)
+    
 
 # ---------------------------------------------------------------------------
 # Runge-Kutta steppers — JIT-compiled versions
 # All accept (ode_func, dt, y) or (ode_func, jac_func, dt, y, Phi).
 # ---------------------------------------------------------------------------
 
-@njit
-def rk1(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
-    """Forward Euler (RK1) step."""
-    return y + dt * ode_func(y)
 
-
-@njit
-def rk1_var(ode_func, jac_func, dt: float,
-            y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Forward Euler (RK1) step for state + variational equation."""
-    k1 = ode_func(y)
-    L1 = jac_func(y) @ Phi
-    return y + dt * k1, Phi + dt * L1
-
-
-@njit
+@njit(cache=True)
 def rk2(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
     """Midpoint (RK2) step."""
     k1 = ode_func(y)
@@ -118,7 +105,7 @@ def rk2(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
     return y + dt * k2
 
 
-@njit
+@njit(cache=True)
 def rk2_var(ode_func, jac_func, dt: float,
             y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Midpoint (RK2) step for state + variational equation."""
@@ -129,31 +116,7 @@ def rk2_var(ode_func, jac_func, dt: float,
     return y + dt * k2, Phi + dt * L2
 
 
-@njit
-def rk3(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
-    """Heun's 3rd-order (RK3) step."""
-    k1 = ode_func(y)
-    k2 = ode_func(y + 0.5 * dt * k1)
-    k3 = ode_func(y - dt * k1 + 2.0 * dt * k2)
-    return y + (dt / 6.0) * (k1 + 4.0 * k2 + k3)
-
-
-@njit
-def rk3_var(ode_func, jac_func, dt: float,
-            y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Heun's 3rd-order (RK3) step for state + variational equation."""
-    k1 = ode_func(y)
-    L1 = jac_func(y) @ Phi
-    k2 = ode_func(y + 0.5 * dt * k1)
-    L2 = jac_func(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
-    k3 = ode_func(y - dt * k1 + 2.0 * dt * k2)
-    L3 = jac_func(y - dt * k1 + 2.0 * dt * k2) @ (Phi - dt * L1 + 2.0 * dt * L2)
-    y_next = y + (dt / 6.0) * (k1 + 4.0 * k2 + k3)
-    Phi_next = Phi + (dt / 6.0) * (L1 + 4.0 * L2 + L3)
-    return y_next, Phi_next
-
-
-@njit
+@njit(cache=True)
 def rk4(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
     """Classic Runge-Kutta 4th-order (RK4) step."""
     k1 = ode_func(y)
@@ -163,7 +126,7 @@ def rk4(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
     return y + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
 
-@njit
+@njit(cache=True)
 def rk4_var(ode_func, jac_func, dt: float,
             y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Classic Runge-Kutta 4th-order (RK4) step for state + variational equation."""
@@ -179,93 +142,76 @@ def rk4_var(ode_func, jac_func, dt: float,
     Phi_next = Phi + (dt / 6.0) * (L1 + 2.0 * L2 + 2.0 * L3 + L4)
     return y_next, Phi_next
 
+RK_METHODS = {
+    'RK2': rk2,
+    'RK4': rk4,
+}
 
-# ---------------------------------------------------------------------------
-# Plain-Python stepper wrappers
-# Used when jit_enabled=False so we never rely on .py_func (which only
-# exists on real Numba-compiled functions, not the no-op fallback).
-# ---------------------------------------------------------------------------
-
-def _rk1_py(ode_func, dt, y):
-    return y + dt * ode_func(y)
-
-def _rk1_var_py(ode_func, jac_func, dt, y, Phi):
-    k1 = ode_func(y);  L1 = jac_func(y) @ Phi
-    return y + dt * k1, Phi + dt * L1
-
-def _rk2_py(ode_func, dt, y):
-    k1 = ode_func(y)
-    k2 = ode_func(y + 0.5 * dt * k1)
-    return y + dt * k2
-
-def _rk2_var_py(ode_func, jac_func, dt, y, Phi):
-    k1 = ode_func(y);  L1 = jac_func(y) @ Phi
-    k2 = ode_func(y + 0.5 * dt * k1)
-    L2 = jac_func(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
-    return y + dt * k2, Phi + dt * L2
-
-def _rk3_py(ode_func, dt, y):
-    k1 = ode_func(y)
-    k2 = ode_func(y + 0.5 * dt * k1)
-    k3 = ode_func(y - dt * k1 + 2.0 * dt * k2)
-    return y + (dt / 6.0) * (k1 + 4.0 * k2 + k3)
-
-def _rk3_var_py(ode_func, jac_func, dt, y, Phi):
-    k1 = ode_func(y);  L1 = jac_func(y) @ Phi
-    k2 = ode_func(y + 0.5 * dt * k1)
-    L2 = jac_func(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
-    k3 = ode_func(y - dt * k1 + 2.0 * dt * k2)
-    L3 = jac_func(y - dt * k1 + 2.0 * dt * k2) @ (Phi - dt * L1 + 2.0 * dt * L2)
-    return y + (dt / 6.0) * (k1 + 4.0 * k2 + k3), Phi + (dt / 6.0) * (L1 + 4.0 * L2 + L3)
-
-def _rk4_py(ode_func, dt, y):
-    k1 = ode_func(y)
-    k2 = ode_func(y + 0.5 * dt * k1)
-    k3 = ode_func(y + 0.5 * dt * k2)
-    k4 = ode_func(y + dt * k3)
-    return y + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
-
-def _rk4_var_py(ode_func, jac_func, dt, y, Phi):
-    k1 = ode_func(y);  L1 = jac_func(y) @ Phi
-    k2 = ode_func(y + 0.5 * dt * k1)
-    L2 = jac_func(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
-    k3 = ode_func(y + 0.5 * dt * k2)
-    L3 = jac_func(y + 0.5 * dt * k2) @ (Phi + 0.5 * dt * L2)
-    k4 = ode_func(y + dt * k3)
-    L4 = jac_func(y + dt * k3) @ (Phi + dt * L3)
-    return (y  + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4),
-            Phi + (dt / 6.0) * (L1 + 2.0 * L2 + 2.0 * L3 + L4))
-
+RK_VAR_METHODS = {
+    'RK2': rk2_var,
+    'RK4': rk4_var,
+}
 
 # ---------------------------------------------------------------------------
 # Discrete map simulation utilities
 # ---------------------------------------------------------------------------
 
-@njit
-def simulate(map_func, x0: np.ndarray, n_steps: int, dim: int) -> np.ndarray:
-    """Generic JIT-compiled simulation loop for discrete-time maps."""
-    x = np.zeros((n_steps, dim))
-    state = x0
-    for i in range(n_steps):
-        x[i] = state
-        state = map_func(state)
-    return x
+@njit(cache=True)
+def simulate_map(map_func, x0: np.ndarray, n_steps: int, n_burn: int, dim: int) -> np.ndarray:
+    """Generic JIT-compiled simulation loop for discrete-time maps (unified loop)."""
+    x_hist = np.empty((n_steps, dim))
+    x_curr = x0
+
+    for i in range(n_burn + n_steps):
+        if i >= n_burn:
+            x_hist[i - n_burn] = x_curr
+        
+        x_curr = map_func(x_curr)
+        
+    return x_hist
 
 
-# ---------------------------------------------------------------------------
-# Runge-Kutta lookup tables: method name → (jit_stepper, py_stepper)
-# ---------------------------------------------------------------------------
+@njit(cache=True)
+def simulate_ode(step_func, ode_func, dt, n_steps, n_burn, x0, dim):
+    """Generic JIT-compiled simulation loop for ODE state only."""
+    x_hist = np.empty((n_steps, dim))
 
-RK_METHODS = {
-    'RK1': (rk1, _rk1_py),
-    'RK2': (rk2, _rk2_py),
-    'RK3': (rk3, _rk3_py),
-    'RK4': (rk4, _rk4_py),
-}
+    for i in range(n_burn + n_steps):
+        if i >= n_burn:
+            x_hist[i - n_burn] = x0
+        
+        x0 = step_func(ode_func, dt, x0)
+        
+    return x_hist
 
-RK_VAR_METHODS = {
-    'RK1': (rk1_var, _rk1_var_py),
-    'RK2': (rk2_var, _rk2_var_py),
-    'RK3': (rk3_var, _rk3_var_py),
-    'RK4': (rk4_var, _rk4_var_py),
-}
+
+@njit(cache=True)
+def simulate_ode_var(step_func, ode_func, jac_func, qr_func, dt, n_steps, n_burn, x0, Phi0, dim):
+    """Generic JIT-compiled simulation loop for ODE state + variational equation."""
+    # Pre-allocate histories
+    x_hist = np.empty((n_steps, dim))
+    Phi_hist = np.empty((n_steps, dim, dim))
+    Q_hist = np.empty((n_steps, dim, dim))
+    R_hist = np.empty((n_steps, dim, dim))
+    
+    # Workspaces
+    Q_work = np.empty((dim, dim))
+
+    for i in range(n_burn + n_steps):
+        # 1. Perform QR re-orthonormalization
+        if i < n_burn:
+            Q_work[:], _ = qr_func(Phi0)
+            Q_basis = Q_work
+        else:
+            idx = i - n_burn
+            x_hist[idx] = x0
+            Phi_hist[idx] = Phi0
+            
+            q_out, r_out = qr_func(Phi0)
+            Q_hist[idx], R_hist[idx] = q_out, r_out
+            Q_basis = Q_hist[idx]
+        
+        # 2. Advance one step using the orthogonalized basis
+        x0, Phi0 = step_func(ode_func, jac_func, dt, x0, Q_basis)
+        
+    return x_hist, Phi_hist, Q_hist, R_hist

@@ -8,7 +8,7 @@ Each system defines:
 
 import numpy as np
 from .base import DynamicalSystem
-from .utils import njit, qr_GS_2x2, qr_GS_3x3, qr_HH, simulate
+from .utils import njit, qr_GS_2x2, qr_GS_3x3, qr_HH, simulate_map
 from .methods import (
     discrete_qr_spectrum, 
     discrete_qr_loop, 
@@ -31,49 +31,37 @@ class DiscreteMap(DynamicalSystem):
 
     def _warmup_specific(self) -> None:
         """Trigger JIT compilation for simulation and spectrum calculation."""
-        dummy_x = np.ones(self.dim)
-        self.simulate(x0=dummy_x, n_steps=1)
-        if self.jit_enabled:
-            self.discrete_qr_lyapunov_spectrum(qr_method='householder')
-            if self.dim in [2, 3]:
-                self.discrete_qr_lyapunov_spectrum(qr_method='gram-schmidt')
+        x0_dummy = np.ones(self.dim)
+        self.simulate(x0_dummy, 1)
+        for qm in (['householder', 'gram-schmidt'] if self.dim in [2, 3] else ['householder']):
+            self.discrete_qr_lyapunov_spectrum(qm)
 
-    def simulate(self, x0, n_steps: int) -> np.ndarray:
-        """Simulate the system for n_steps from x0."""
-        self.n_steps = n_steps
-        # Use centralized JIT utility from utils.py
-        x0_arr = np.atleast_1d(np.asarray(x0, dtype=float))
-        self.x = simulate(self.forward_map, x0_arr, n_steps, self.dim)
+    def simulate(self, x0, n_steps: int, n_burn: int = 0):
+        """Simulate the system for n_steps from x0, after burning n_burn steps."""
+        self.n_steps, x0_arr = n_steps, np.atleast_1d(np.asarray(x0, dtype=float))
+        self.x = simulate_map(self.forward_map, x0_arr, n_steps, n_burn, self.dim)
         return self.x
 
     def discrete_qr_lyapunov_spectrum(self, qr_method: str = 'householder') -> np.ndarray:
         """Compute the Lyapunov spectrum using the discrete QR method."""
         self.J = self.jac(self.x)
-
         if self.dim == 1:
             self.lyapunov_spectrum = np.array([np.mean(np.log(np.abs(self.J.flatten())))])
             return self.lyapunov_spectrum
 
-        qr_func =   qr_GS_2x2 if (qr_method == 'gram-schmidt' and self.dim == 2) else \
-                    qr_GS_3x3 if (qr_method == 'gram-schmidt' and self.dim == 3) else \
-                    qr_HH
-
+        qrf = (qr_GS_2x2 if self.dim == 2 else qr_GS_3x3) if qr_method == 'gram-schmidt' and self.dim in [2, 3] else qr_HH
+        
         if self.jit_enabled:
-            if self.dim == 2:
-                self.Q, self.R = discrete_qr_loop_2d(self.J, self.n_steps)
-            else:
-                self.Q, self.R = discrete_qr_loop(qr_func, self.J, self.n_steps, self.dim)
-            self.lyapunov_spectrum = discrete_qr_spectrum(self.R, 1.0)
-            return self.lyapunov_spectrum
+            self.Q, self.R = discrete_qr_loop_2d(self.J, self.n_steps) if self.dim == 2 else \
+                             discrete_qr_loop(qrf, self.J, self.n_steps, self.dim)
+        else:
+            Q = np.eye(self.dim)
+            self.Q = self.R = np.empty((self.n_steps, self.dim, self.dim))
+            for i in range(self.n_steps):
+                Q, self.R[i] = qrf(self.J[i] @ Q)
+                self.Q[i] = Q
 
-        Q = np.eye(self.dim)
-        self.R = np.zeros((self.n_steps, self.dim, self.dim))
-        self.Q = np.zeros((self.n_steps, self.dim, self.dim))
-        for i in range(self.n_steps):
-            Q, self.R[i] = qr_func(self.J[i] @ Q)
-            self.Q[i] = Q
-
-        self.lyapunov_spectrum = discrete_qr_spectrum(self.R, 1.0)
+        self.lyapunov_spectrum = discrete_qr_spectrum(self.R)
         return self.lyapunov_spectrum
 
 

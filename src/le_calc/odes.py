@@ -5,15 +5,18 @@ Each system defines:
   - ode(x)  : the vector field  f(x) = dx/dt
   - jac(x)  : the analytical Jacobian  J(x) = df/dx  at a single 1-D state
 
-When JIT is available (self.jit_enabled is True), @njit-compiled closures are
-built at construction time and used for the tight integration loops, giving a
-significant speedup. When JIT is disabled, identical plain-Python functions are
-used via the RK_METHODS / RK_VAR_METHODS lookup tables in utils.py.
+When JIT is available (self.jit_enabled is True), @njit-compiled kernels are
+used for the tight integration loops. The RK_METHODS / RK_VAR_METHODS lookup
+tables in utils.py map method names to their compiled steppers.
 """
 
 import numpy as np
 from .base import DynamicalSystem
-from .utils import njit, qr_GS_2x2, qr_GS_3x3, qr_HH, RK_METHODS, RK_VAR_METHODS
+from .utils import (
+    njit, qr_GS_2x2, qr_GS_3x3, qr_HH, 
+    RK_METHODS, RK_VAR_METHODS,
+    simulate_ode, simulate_ode_var
+)
 
 
 class ODEs(DynamicalSystem):
@@ -24,6 +27,36 @@ class ODEs(DynamicalSystem):
 
     def __init__(self, dim: int, eager_compile: bool = True):
         super().__init__(dim=dim, eager_compile=eager_compile)
+
+    def _warmup_specific(self) -> None:
+        """Trigger JIT compilation for all RK methods and QR routines (condensed)."""
+        from .methods import matrix_exponential_spectrum
+        qr_m = ['householder', 'gram-schmidt']
+        for m in ['RK2', 'RK4']:
+            self.simulate(0.01, (0, 0.01), np.ones(self.dim), method=m)
+            for qm in qr_m:
+                self.simulate_var(0.01, (0, 0.01), np.ones(self.dim), np.eye(self.dim), m, qm)
+                matrix_exponential_spectrum(np.array([np.eye(self.dim)]), 0.01, qr_method=qm)
+            
+
+    def _prepare_integration(self, dt: float, t_span: tuple[float, float], 
+                               method: str, is_var: bool = False):
+        """Standardized preparation for ODE integration."""
+        # 1. Stepper Lookup
+        lookup = RK_VAR_METHODS if is_var else RK_METHODS
+        if method not in lookup:
+            raise ValueError(f"Method '{method}' is not supported. "
+                             f"Choose from {list(lookup)}.")
+        
+        step_func = lookup[method]
+
+        # 2. Step Calculation
+        t_burn, t_end = t_span
+        n_burn = int(t_burn / dt)
+        n_steps = int((t_end - t_burn) / dt)
+        self.n_steps = n_steps
+
+        return step_func, n_steps, n_burn
 
     def calc_jac(self) -> np.ndarray:
         """
@@ -39,99 +72,27 @@ class ODEs(DynamicalSystem):
         self.J = np.empty((self.n_steps, self.dim, self.dim))
         
         # Prefer JIT attributes 'ode'/'jac' over the class methods
-        jac_func = self.jac if self.jit_enabled else self.jac
+        jac_func = self.jac
         
         for i in range(self.n_steps):
             self.J[i] = jac_func(self.x[i])
         return self.J
 
-    def _get_simulation_handles(self, method: str, is_var: bool = False):
-        """
-        Helper to select the correct stepper and function handles based on JIT status.
-        """
-        lookup = RK_VAR_METHODS if is_var else RK_METHODS
-        if method not in lookup:
-            raise ValueError(f"Method '{method}' is not supported. "
-                             f"Choose from {list(lookup)}.")
-
-        jit_step, py_step = lookup[method]
-        
-        # Determine if we can use JIT handles
-        use_jit = self.jit_enabled and hasattr(self, 'ode')
-        if is_var:
-            use_jit = use_jit and hasattr(self, 'jac')
-
-        if use_jit:
-            return (jit_step, self.ode, self.jac) if is_var else (jit_step, self.ode)
-        else:
-            return (py_step, self.ode, self.jac) if is_var else (py_step, self.ode)
-
-    def simulate(
-        self,
-        dt: float,
-        t_span: tuple[float, float],
-        y0: np.ndarray,
-        method: str = 'RK4',
-    ) -> np.ndarray:
+    def simulate(self, dt: float, t_span: tuple[float, float], x0: np.ndarray, method: str = 'RK4'):
         """Integrate the ODE system (state only) and store the trajectory."""
-        step_func, ode_func = self._get_simulation_handles(method, is_var=False)
-
-        t_eval = np.arange(t_span[0], t_span[1], dt)
-        self.n_steps = len(t_eval)
-        y = np.asarray(y0, dtype=float)
-        self.x = np.zeros((self.n_steps, self.dim))
-
-        # 1. Burn transients
-        for _ in np.arange(0, t_span[0], dt):
-            y = step_func(ode_func, dt, y)
-
-        # 2. Integration loop
-        for i in range(self.n_steps):
-            self.x[i] = y
-            y = step_func(ode_func, dt, y)
-
+        sf, ns, nb = self._prepare_integration(dt, t_span, method, is_var=False)
+        self.x = simulate_ode(sf, self.ode, dt, ns, nb, np.asarray(x0, dtype=float), self.dim)
         return self.x
 
-    def simulate_var(
-        self,
-        dt: float,
-        t_span: tuple[float, float],
-        x0: np.ndarray,
-        Phi0: np.ndarray,
-        method: str = 'RK4',
-        qr_method: str = 'householder',
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Integrate state + variational equations with QR re-orthonormalization.
-        Stores the state trajectory in self.x.
-        """
-        step_func, ode_func, jac_func = self._get_simulation_handles(method, is_var=True)
-
-        qr_func =   qr_GS_2x2 if (qr_method == 'gram-schmidt' and self.dim == 2) else \
-                    qr_GS_3x3 if (qr_method == 'gram-schmidt' and self.dim == 3) else \
-                    qr_HH
-
-        t_eval = np.arange(t_span[0], t_span[1], dt)
-        self.n_steps = len(t_eval)
-        y   = np.asarray(x0,   dtype=float)
-        Phi = np.asarray(Phi0, dtype=float)
-        self.x   = np.zeros((self.n_steps, self.dim))
-        self.phi = np.zeros((self.n_steps, self.dim, self.dim))
-        self.Q   = np.zeros((self.n_steps, self.dim, self.dim))
-        self.R   = np.zeros((self.n_steps, self.dim, self.dim))
-
-        # 1. Burn transients
-        for _ in np.arange(0, t_span[0], dt):
-            Q, _ = qr_func(Phi)
-            y, Phi = step_func(ode_func, jac_func, dt, y, Q)
-
-        # 2. Main integration loop
-        for i in range(self.n_steps):
-            self.x[i] = y
-            Q, R = qr_func(Phi)
-            self.phi[i], self.Q[i], self.R[i] = Phi, Q, R
-            y, Phi = step_func(ode_func, jac_func, dt, y, Q)
-
+    def simulate_var(self, dt: float, t_span: tuple[float, float], x0: np.ndarray, 
+                     Phi0: np.ndarray, method: str = 'RK4', qr_method: str = 'householder'):
+        """Integrate state + variational equations with QR re-orthonormalization."""
+        sf, ns, nb = self._prepare_integration(dt, t_span, method, is_var=True)
+        qrf = (qr_GS_2x2 if self.dim == 2 else qr_GS_3x3) if qr_method == 'gram-schmidt' and self.dim in [2, 3] else qr_HH
+        self.x, self.phi, self.Q, self.R = simulate_ode_var(
+            sf, self.ode, self.jac, qrf, dt, ns, nb, 
+            np.asarray(x0, dtype=float), np.asarray(Phi0, dtype=float), self.dim
+        )
         return self.x, self.phi, self.Q, self.R
 
 

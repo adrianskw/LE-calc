@@ -27,19 +27,10 @@ class DynamicalSystem:
         Whether to use JIT-compiled function handles for optimization.
     """
     def __init__(self, dim: int, eager_compile: bool = True):
-        self.dim: int = dim
-        self.n_steps: int = 0
-        self.x: np.ndarray = np.empty((0, dim))
-        self.J: np.ndarray = np.empty((0, dim, dim))
-        self.phi: np.ndarray = np.empty((0, dim, dim))
-        self.Q: np.ndarray = np.empty((0, dim, dim))
-        self.R: np.ndarray = np.empty((0, dim, dim))
-        self.lyapunov_spectrum = np.empty(dim)
+        self.dim, self.n_steps, self.jit_enabled = dim, 0, HAS_NUMBA
+        self.x, self.lyapunov_spectrum = np.empty((0, dim)), np.empty(dim)
+        self.J = self.phi = self.Q = self.R = np.empty((0, dim, dim))
         
-        # JIT is enabled by default if numba is installed
-        self.jit_enabled = HAS_NUMBA
-
-        # Centralized JIT lifecycle
         if self.jit_enabled and eager_compile:
             self.compile()
 
@@ -51,37 +42,19 @@ class DynamicalSystem:
         if not self.jit_enabled:
             return
 
-        # 1. Warm up basic function handles if they exist
-        dummy_x = np.ones(self.dim)
+        # 1. Warm up basic function handles (forward_map, ode, jac)
         for attr in ['forward_map', 'ode', 'jac']:
-            if hasattr(self, attr):
-                handle = getattr(self, attr)
-                try:
-                    _ = handle(dummy_x)
-                except:
-                    pass
+            if (handle := getattr(self, attr, None)) and callable(handle):
+                try: handle(np.ones(self.dim))
+                except: pass
 
         # 2. Trigger simulation loop compilation (subclass-specific)
         self._warmup_simulation()
 
     def _warmup_simulation(self) -> None:
         """Triggers a minimal 1-step simulation to warm up the integration/map loops."""
-        dummy_x = np.ones(self.dim)
-        
-        # ODE Path
-        if hasattr(self, 'ode'):
-            # Pre-compile ALL standard RK methods (RK1-RK4)
-            for m in ['RK1', 'RK2', 'RK3', 'RK4']:
-                self.simulate(dt=0.01, t_span=(0, 0.01), y0=dummy_x, method=m)
-                if hasattr(self, 'jac'):
-                    self.simulate_var(dt=0.01, t_span=(0, 0.01), x0=dummy_x, Phi0=np.eye(self.dim), method=m)
-        
-        # Map Path
-        else:
-            # For discrete maps, simulate is a Python method that uses a JIT loop internally.
-            self._warmup_specific()
+        self._warmup_specific()
 
     def _warmup_specific(self) -> None:
-        """Subclass-specific warmup hook for complex kernels (e.g. spectrum)."""
-        dummy_x = np.ones(self.dim)
-        self.simulate(x0=dummy_x, n_steps=1)
+        """Subclass-specific warmup hook for complex kernels (e.g. simulation loops)."""
+        pass

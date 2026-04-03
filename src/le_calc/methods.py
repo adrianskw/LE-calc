@@ -3,7 +3,6 @@ methods.py — methods for calculating Lyapunov exponents
 """
 
 import numpy as np
-from scipy.linalg import expm
 from .utils import njit, qr_GS_2x2, qr_GS_3x3, qr_HH
 
 
@@ -12,6 +11,10 @@ def local_lyapunov_exponents(Q_history: np.ndarray, J_history: np.ndarray) -> np
     Compute the local Lyapunov exponents from the continuous QR formulation.
     Formula: chi_i(t) = (Q^T(t) * J(t) * Q(t))_ii
     """
+    from .utils import HAS_NUMBA
+    if HAS_NUMBA:
+        return local_lyapunov_exponents_jit(Q_history, J_history)
+
     # Batched matrix multiplication: Q^T @ J @ Q
     # Q_history.transpose(0, 2, 1) gives the transpose of each Q matrix in the stack
     QTJQ = Q_history.transpose(0, 2, 1) @ J_history @ Q_history
@@ -21,6 +24,10 @@ def local_lyapunov_exponents(Q_history: np.ndarray, J_history: np.ndarray) -> np
 
 def continuous_qr_spectrum(Q_history: np.ndarray, J_history: np.ndarray) -> np.ndarray:
     """Compute the Lyapunov spectrum using the continuous QR formulation with a simple mean."""
+    from .utils import HAS_NUMBA
+    if HAS_NUMBA:
+        return continuous_qr_spectrum_jit(Q_history, J_history)
+
     local_lyap = local_lyapunov_exponents(Q_history, J_history)
     return np.mean(local_lyap, axis=0)
 
@@ -36,52 +43,58 @@ def discrete_qr_spectrum(R_history: np.ndarray, dt: float = 1.0) -> np.ndarray:
     return np.mean(np.log(np.abs(R_diag)), axis=0) / dt
 
 
+@njit(cache=True)
 def matrix_exponential_spectrum(
     J_history: np.ndarray, 
     dt: float, 
-    qr_method: str = 'householder'
+    qr_method: str = 'householder',
+    order: int = 4
 ) -> np.ndarray:
     """
     Compute the Lyapunov spectrum using the Matrix Exponential formulation.
-    Formula: Q_next, R_next = QR( exp(J*dt) @ Q_current )
-
-    Parameters
-    ----------
-    J_history : np.ndarray
-        Jacobian matrices along the trajectory, shape (N, dim, dim).
-    dt : float
-        Time step.
-    qr_method : str
-        QR decomposition method.
-
-    Returns
-    -------
-    spectrum : np.ndarray
-        The calculated Lyapunov exponents, shape (dim,).
+    Fully JIT-compiled and memory-optimized (O(1) storage).
     """
     n_steps, dim, _ = J_history.shape
-    Q = np.eye(dim)
-    R_diags = np.zeros((n_steps, dim))
+    log_sums = np.zeros(dim)
     
-    qr_func = qr_GS_2x2 if (qr_method == 'gram-schmidt' and dim == 2) else \
-              qr_GS_3x3 if (qr_method == 'gram-schmidt' and dim == 3) else \
-              qr_HH
-
+    # 1. Pre-allocate integration workspaces
+    Q_curr = np.eye(dim)
+    I_dim = np.eye(dim)
+    M = np.empty((dim, dim))
+    term = np.empty((dim, dim))
+    
     for i in range(n_steps):
-        # Evolution of the tangent space via matrix exponential
-        M = expm(dt * J_history[i])
-        Q, R = qr_func(M @ Q)
-        R_diags[i] = np.diagonal(R)
+        # 2. Taylor expansion for exp(J*dt) 
+        A = J_history[i] * dt
+        M[:] = I_dim
+        term[:] = I_dim
+        for k in range(1, order + 1):
+            term = (term @ A) / k
+            M += term
         
-    # Return spectrum via mean log-diagonal of R
-    return np.mean(np.log(np.abs(R_diags)), axis=0) / dt
+        # 3. Evolve basis frame
+        if qr_method == 'gram-schmidt' and dim == 2:
+            Q_next, R = qr_GS_2x2(M @ Q_curr)
+        elif qr_method == 'gram-schmidt' and dim == 3:
+            Q_next, R = qr_GS_3x3(M @ Q_curr)
+        else:
+            Q_next, R = qr_HH(M @ Q_curr)
+
+        Q_curr = np.ascontiguousarray(Q_next)
+        
+        # 4. Accumulate growth directly (lambda_i = mean(ln|R_ii|) / dt)
+        for d in range(dim):
+            log_sums[d] += np.log(np.abs(R[d, d]))
+            
+    # 5. Final spectrum calculation
+    return log_sums / (n_steps * dt)
 
 
 # ---------------------------------------------------------------------------
 # JIT-Compiled Calculation Loops (Standardized)
 # ---------------------------------------------------------------------------
 
-@njit
+@njit(cache=True)
 def discrete_qr_loop_2d(J: np.ndarray, n_steps: int) -> tuple[np.ndarray, np.ndarray]:
     """Highly optimized, fully-inlined 2x2 QR loop for discrete maps."""
     Q = np.eye(2)
@@ -104,7 +117,7 @@ def discrete_qr_loop_2d(J: np.ndarray, n_steps: int) -> tuple[np.ndarray, np.nda
     return Q_out, R_out
 
 
-@njit
+@njit(cache=True)
 def discrete_qr_loop(qr_func, J: np.ndarray, n_steps: int, dim: int) -> tuple[np.ndarray, np.ndarray]:
     """Generic JIT-compiled QR re-orthonormalization loop for discrete maps."""
     Q = np.eye(dim)
@@ -117,3 +130,42 @@ def discrete_qr_loop(qr_func, J: np.ndarray, n_steps: int, dim: int) -> tuple[np
         Q_out[i] = Q
         R_out[i] = R
     return Q_out, R_out
+
+
+@njit(cache=True)
+def local_lyapunov_exponents_jit(Q_history: np.ndarray, J_history: np.ndarray) -> np.ndarray:
+    """JIT-compiled local Lyapunov exponents calculation (O(1) intermediate memory)."""
+    n_steps, dim, _ = Q_history.shape
+    res = np.empty((n_steps, dim))
+    for i in range(n_steps):
+        Q = Q_history[i]
+        J = J_history[i]
+        for d in range(dim):
+            # (Q^T * J * Q)_dd = sum_j sum_k Q_jd * J_jk * Q_kd
+            val = 0.0
+            for j in range(dim):
+                row_sum = 0.0
+                for k in range(dim):
+                    row_sum += J[j, k] * Q[k, d]
+                val += Q[j, d] * row_sum
+            res[i, d] = val
+    return res
+
+
+@njit(cache=True)
+def continuous_qr_spectrum_jit(Q_history: np.ndarray, J_history: np.ndarray) -> np.ndarray:
+    """JIT-compiled continuous QR spectrum calculation (Mean of diagonal growth)."""
+    n_steps, dim, _ = Q_history.shape
+    sums = np.zeros(dim)
+    for i in range(n_steps):
+        Q = Q_history[i]
+        J = J_history[i]
+        for d in range(dim):
+            val = 0.0
+            for j in range(dim):
+                row_sum = 0.0
+                for k in range(dim):
+                    row_sum += J[j, k] * Q[k, d]
+                val += Q[j, d] * row_sum
+            sums[d] += val
+    return sums / n_steps
