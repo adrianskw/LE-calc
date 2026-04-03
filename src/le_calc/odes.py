@@ -25,24 +25,6 @@ class ODEs(DynamicalSystem):
     def __init__(self, dim: int, eager_compile: bool = True):
         super().__init__(dim=dim, eager_compile=eager_compile)
 
-    def ode(self, x: np.ndarray) -> np.ndarray:
-        """Compute the vector field f(x) = dx/dt."""
-        raise NotImplementedError
-
-    def jac(self, x: np.ndarray) -> np.ndarray:
-        """
-        Compute the analytical Jacobian J(x) = df/dx at a single state.
-
-        Parameters
-        ----------
-        x : np.ndarray, shape (dim,)
-
-        Returns
-        -------
-        J : np.ndarray, shape (dim, dim)
-        """
-        raise NotImplementedError
-
     def calc_jac(self) -> np.ndarray:
         """
         Compute and store the Jacobian matrices along the stored trajectory.
@@ -56,8 +38,8 @@ class ODEs(DynamicalSystem):
         """
         self.J = np.empty((self.n_steps, self.dim, self.dim))
         
-        # Use JIT-compiled jac if available and JIT is enabled
-        jac_func = getattr(self, '_jac_jit', self.jac) if self.jit_enabled else self.jac
+        # Prefer JIT attributes 'ode'/'jac' over the class methods
+        jac_func = self.jac if self.jit_enabled else self.jac
         
         for i in range(self.n_steps):
             self.J[i] = jac_func(self.x[i])
@@ -75,12 +57,12 @@ class ODEs(DynamicalSystem):
         jit_step, py_step = lookup[method]
         
         # Determine if we can use JIT handles
-        use_jit = self.jit_enabled and hasattr(self, '_ode_jit')
+        use_jit = self.jit_enabled and hasattr(self, 'ode')
         if is_var:
-            use_jit = use_jit and hasattr(self, '_jac_jit')
+            use_jit = use_jit and hasattr(self, 'jac')
 
         if use_jit:
-            return (jit_step, self._ode_jit, self._jac_jit) if is_var else (jit_step, self._ode_jit)
+            return (jit_step, self.ode, self.jac) if is_var else (jit_step, self.ode)
         else:
             return (py_step, self.ode, self.jac) if is_var else (py_step, self.ode)
 
@@ -173,42 +155,26 @@ class Lorenz63(ODEs):
         self.sigma = sigma
         self.rho   = rho
         self.beta  = beta
-        super().__init__(dim=3, eager_compile=eager_compile)
 
-    def _setup_jit_functions(self):
-        """Build @njit-compiled closures with baked-in parameters."""
+        # Define ODE and Jacobian here (same pattern as maps.py):
         s, r, b = self.sigma, self.rho, self.beta
 
         @njit
-        def ode_jit(x):
+        def ode(x):
             x1, x2, x3 = x[0], x[1], x[2]
             return np.array([s*(x2-x1), x1*(r-x3)-x2, x1*x2-b*x3])
+        self.ode = ode
 
         @njit
-        def jac_jit(x):
+        def jac(x):
             x1, x2, x3 = x[0], x[1], x[2]
             return np.array([[-s,    s,   0.0],
                               [r-x3, -1.0, -x1],
                               [x2,   x1,  -b ]])
+        self.jac = jac
 
-        self._ode_jit = ode_jit
-        self._jac_jit = jac_jit
-
-    def ode(self, x: np.ndarray) -> np.ndarray:
-        x1, x2, x3 = x
-        return np.array([
-            self.sigma * (x2 - x1),
-            x1 * (self.rho - x3) - x2,
-            x1 * x2 - self.beta * x3,
-        ])
-
-    def jac(self, x: np.ndarray) -> np.ndarray:
-        x1, x2, x3 = x
-        return np.array([
-            [-self.sigma,  self.sigma, 0.0       ],
-            [self.rho-x3, -1.0,       -x1       ],
-            [x2,           x1,        -self.beta ],
-        ])
+        # Super constructor handles warmup 
+        super().__init__(dim=3, eager_compile=eager_compile)
 
 
 class Rossler(ODEs):
@@ -227,39 +193,23 @@ class Rossler(ODEs):
         self.a = a
         self.b = b
         self.c = c
-        super().__init__(dim=3, eager_compile=eager_compile)
 
-    def _setup_jit_functions(self):
-        """Build @njit-compiled closures with baked-in parameters."""
-        a, b, c = self.a, self.b, self.c
+        # Define ODE and Jacobian here:
+        a_p, b_p, c_p = self.a, self.b, self.c
 
         @njit
-        def ode_jit(x):
+        def ode(x):
             x1, x2, x3 = x[0], x[1], x[2]
-            return np.array([-x2-x3, x1+a*x2, b+x3*(x1-c)])
+            return np.array([-x2-x3, x1+a_p*x2, b_p+x3*(x1-c_p)])
+        self.ode = ode
 
         @njit
-        def jac_jit(x):
+        def jac(x):
             x1, x2, x3 = x[0], x[1], x[2]
             return np.array([[0.0, -1.0, -1.0],
-                             [1.0,  a,    0.0],
-                             [x3,   0.0, x1-c]])
+                             [1.0,  a_p,    0.0],
+                             [x3,   0.0, x1-c_p]])
+        self.jac = jac
 
-        self._ode_jit = ode_jit
-        self._jac_jit = jac_jit
-
-    def ode(self, x: np.ndarray) -> np.ndarray:
-        x1, x2, x3 = x
-        return np.array([
-            -x2 - x3,
-            x1 + self.a * x2,
-            self.b + x3 * (x1 - self.c),
-        ])
-
-    def jac(self, x: np.ndarray) -> np.ndarray:
-        x1, x2, x3 = x
-        return np.array([
-            [0.0, -1.0,    -1.0        ],
-            [1.0,  self.a,  0.0        ],
-            [x3,   0.0,    x1-self.c  ],
-        ])
+        # Super constructor handles warmup
+        super().__init__(dim=3, eager_compile=eager_compile)

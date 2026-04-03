@@ -237,7 +237,25 @@ def _rk4_var_py(ode_func, jac_func, dt, y, Phi):
             Phi + (dt / 6.0) * (L1 + 2.0 * L2 + 2.0 * L3 + L4))
 
 
-# Lookup tables: method name → (jit_stepper, py_stepper)
+# ---------------------------------------------------------------------------
+# Discrete map simulation utilities
+# ---------------------------------------------------------------------------
+
+@njit
+def simulate(map_func, x0: np.ndarray, n_steps: int, dim: int) -> np.ndarray:
+    """Generic JIT-compiled simulation loop for discrete-time maps."""
+    x = np.zeros((n_steps, dim))
+    state = x0
+    for i in range(n_steps):
+        x[i] = state
+        state = map_func(state)
+    return x
+
+
+# ---------------------------------------------------------------------------
+# Runge-Kutta lookup tables: method name → (jit_stepper, py_stepper)
+# ---------------------------------------------------------------------------
+
 RK_METHODS = {
     'RK1': (rk1, _rk1_py),
     'RK2': (rk2, _rk2_py),

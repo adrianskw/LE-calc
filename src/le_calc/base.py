@@ -53,7 +53,7 @@ class DynamicalSystem:
 
         # 1. Warm up basic function handles if they exist
         dummy_x = np.ones(self.dim)
-        for attr in ['forward_map', '_ode_jit', '_jac_jit']:
+        for attr in ['forward_map', 'ode', 'jac']:
             if hasattr(self, attr):
                 handle = getattr(self, attr)
                 try:
@@ -69,11 +69,11 @@ class DynamicalSystem:
         dummy_x = np.ones(self.dim)
         
         # ODE Path
-        if hasattr(self, '_ode_jit'):
+        if hasattr(self, 'ode'):
             # Pre-compile ALL standard RK methods (RK1-RK4)
             for m in ['RK1', 'RK2', 'RK3', 'RK4']:
                 self.simulate(dt=0.01, t_span=(0, 0.01), y0=dummy_x, method=m)
-                if hasattr(self, '_jac_jit'):
+                if hasattr(self, 'jac'):
                     self.simulate_var(dt=0.01, t_span=(0, 0.01), x0=dummy_x, Phi0=np.eye(self.dim), method=m)
         
         # Map Path

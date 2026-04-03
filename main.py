@@ -81,7 +81,7 @@ def run_lorenz_benchmarks():
     print(f"Number of steps            : {n_steps:,}")
 
     # 1. Compare RK methods and QR Integration Methods
-    for method in ['RK2', 'RK4']:
+    for method in ['RK2']:#, 'RK4']:
         print(f"\n{'='*15} Testing {method} Integration {'='*15}")
         
         for qr_method in ['gram-schmidt', 'householder']:
@@ -116,5 +116,5 @@ def run_lorenz_benchmarks():
             print_spectrum("Matrix Exp + Discrete QR Spectrum ", spec3)
 
 if __name__ == "__main__":
-    run_discrete_map_benchmarks()
-    # run_lorenz_benchmarks()
+    # run_discrete_map_benchmarks()
+    run_lorenz_benchmarks()
