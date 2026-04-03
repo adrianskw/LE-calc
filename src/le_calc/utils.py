@@ -97,7 +97,7 @@ def qr_HH(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 # ---------------------------------------------------------------------------
 
 
-@njit(cache=True)
+@njit
 def rk2(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
     """Midpoint (RK2) step."""
     k1 = ode_func(y)
@@ -105,7 +105,7 @@ def rk2(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
     return y + dt * k2
 
 
-@njit(cache=True)
+@njit
 def rk2_var(ode_func, jac_func, dt: float,
             y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Midpoint (RK2) step for state + variational equation."""
@@ -116,7 +116,7 @@ def rk2_var(ode_func, jac_func, dt: float,
     return y + dt * k2, Phi + dt * L2
 
 
-@njit(cache=True)
+@njit
 def rk4(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
     """Classic Runge-Kutta 4th-order (RK4) step."""
     k1 = ode_func(y)
@@ -126,7 +126,7 @@ def rk4(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
     return y + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
 
-@njit(cache=True)
+@njit
 def rk4_var(ode_func, jac_func, dt: float,
             y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Classic Runge-Kutta 4th-order (RK4) step for state + variational equation."""
@@ -156,7 +156,7 @@ RK_VAR_METHODS = {
 # Discrete map simulation utilities
 # ---------------------------------------------------------------------------
 
-@njit(cache=True)
+@njit
 def simulate_map(map_func, x0: np.ndarray, n_steps: int, n_burn: int, dim: int) -> np.ndarray:
     """Generic JIT-compiled simulation loop for discrete-time maps (unified loop)."""
     x_hist = np.empty((n_steps, dim))
@@ -171,7 +171,7 @@ def simulate_map(map_func, x0: np.ndarray, n_steps: int, n_burn: int, dim: int) 
     return x_hist
 
 
-@njit(cache=True)
+@njit
 def simulate_ode(step_func, ode_func, dt, n_steps, n_burn, x0, dim):
     """Generic JIT-compiled simulation loop for ODE state only."""
     x_hist = np.empty((n_steps, dim))
@@ -185,7 +185,7 @@ def simulate_ode(step_func, ode_func, dt, n_steps, n_burn, x0, dim):
     return x_hist
 
 
-@njit(cache=True)
+@njit
 def simulate_ode_var(step_func, ode_func, jac_func, qr_func, dt, n_steps, n_burn, x0, Phi0, dim):
     """Generic JIT-compiled simulation loop for ODE state + variational equation."""
     # Pre-allocate histories

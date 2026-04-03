@@ -17,8 +17,8 @@ from le_calc.methods import (
 )
 
 # Global constants for uniform output formatting
-SPACING1 = 65  # For header separator lines
-SPACING2 = 32  # For label widths in benchmarks
+SPACING1 = 66  # For header separator lines
+SPACING2 = 33  # For label widths in benchmarks
 
 @contextmanager
 def timer(label):
@@ -38,37 +38,50 @@ def run_discrete_map_benchmarks():
     
     for name, cls, x0 in [("Logistic Map (r=4.0)", LogisticMap, 0.65), 
                           ("Henon Map (a=1.4, b=0.3)", HenonMap, [0.5, 0.2])]:
-        print("\n" + "-"*SPACING1 + f"\n      {name}\n" + "-"*SPACING1)
-        with timer("JIT Warmup / Initialization"): sys = cls()
-        with timer(f"Simulation (1,000,000 steps)"): sys.simulate(x0, 1_000_000)
+        print("\n" + "-"*SPACING1 + f"\n      {name.upper()}\n" + "-"*SPACING1)
         
+        # Phase 1: JIT Warmup
+        with timer("JIT Warmup / Initialization"): 
+            sys = cls()
+        
+        # Phase 2: Trajectory Simulation
+        with timer(f"Simulation (1,000,000 steps)"): 
+            sys.simulate(x0, 1_000_000)
+        
+        # Phase 3: Lyapunov Analysis
         qr_methods = ['householder', 'gram-schmidt'] if sys.dim > 1 else ['householder']
         for qm in qr_methods:
             with timer(f"Calculation Time"): 
                 spec = sys.discrete_qr_lyapunov_spectrum(qm)
-            print_spectrum(f"Lyapunov Exp ({qm})", spec)
+            print_spectrum(f"Lyapunov Spectrum ({qm})", spec)
 
 def run_lorenz_benchmarks():
     """Run and compare different Lyapunov estimation methods for the Lorenz ODE."""
     print("\n" + "="*SPACING1 + "\n      LORENZ 63 ODE BENCHMARKS\n" + "="*SPACING1)
     
-    with timer("JIT Warmup / Initialization"): system = Lorenz63()
+    # Phase 1: Setup & Warmup
+    with timer("JIT Warmup / Initialization"): 
+        system = Lorenz63()
+    
     x0, Phi0, dt = [1.0, 1.0, 10.0], np.eye(3), 0.0025
     t_burn, t_window = 50.0, 2500.0
     t_span = (t_burn, t_burn + t_window)
 
     print(f"{'Transient period (Burn-in)':{SPACING2}}: {t_burn}")
     print(f"{'Integration window':{SPACING2}}: {t_window} (from t={t_span[0]} to {t_span[1]})")
+    print(f"{'Time step (dt)':{SPACING2}}: {dt}")
     print(f"{'Number of steps':{SPACING2}}: {int(t_window / dt):,}")
 
     for method in ['RK2', 'RK4']:
-        print("\n" + "="*SPACING1 + f"\n      TESTING {method.upper()} INTEGRATION\n" + "="*SPACING1)
+        
         for qm in ['gram-schmidt', 'householder']:
-            print("\n" + "-"*SPACING1 + f"\n      {qm.capitalize()} QR ({method})\n" + "-"*SPACING1)
+            print("\n" + "-"*SPACING1 + f"\n      {qm.upper()} QR ({method})\n" + "-"*SPACING1)
+            
+            # Phase 2: Integration of Variational Equations
             with timer(f"Integration ({method}/{qm.capitalize()})"):
                 _, _, Q_hist, R_hist = system.simulate_var(dt, t_span, x0, Phi0, method, qm)
             
-            # Comparison of Spectrum Methods
+            # Phase 3: Lyapunov Spectrum Comparison
             with timer("Method 1: Discrete QR"):
                 spec1 = discrete_qr_spectrum(R_hist, dt)
             print_spectrum("Lyapunov Spectrum", spec1)

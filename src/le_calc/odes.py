@@ -80,17 +80,25 @@ class ODEs(DynamicalSystem):
 
     def simulate(self, dt: float, t_span: tuple[float, float], x0: np.ndarray, method: str = 'RK4'):
         """Integrate the ODE system (state only) and store the trajectory."""
-        sf, ns, nb = self._prepare_integration(dt, t_span, method, is_var=False)
-        self.x = simulate_ode(sf, self.ode, dt, ns, nb, np.asarray(x0, dtype=float), self.dim)
+        step_func, n_steps, n_burn = self._prepare_integration(dt, t_span, method, is_var=False)
+        self.x = simulate_ode(step_func, self.ode, dt, n_steps, n_burn, np.asarray(x0, dtype=float), self.dim)
         return self.x
 
     def simulate_var(self, dt: float, t_span: tuple[float, float], x0: np.ndarray, 
                      Phi0: np.ndarray, method: str = 'RK4', qr_method: str = 'householder'):
         """Integrate state + variational equations with QR re-orthonormalization."""
-        sf, ns, nb = self._prepare_integration(dt, t_span, method, is_var=True)
-        qrf = (qr_GS_2x2 if self.dim == 2 else qr_GS_3x3) if qr_method == 'gram-schmidt' and self.dim in [2, 3] else qr_HH
+        step_func, n_steps, n_burn = self._prepare_integration(dt, t_span, method, is_var=True)
+        
+        # Select the appropriate QR decomposition function
+        if qr_method == 'gram-schmidt' and self.dim == 2:
+            qr_func = qr_GS_2x2
+        elif qr_method == 'gram-schmidt' and self.dim == 3:
+            qr_func = qr_GS_3x3
+        else:
+            qr_func = qr_HH
+
         self.x, self.phi, self.Q, self.R = simulate_ode_var(
-            sf, self.ode, self.jac, qrf, dt, ns, nb, 
+            step_func, self.ode, self.jac, qr_func, dt, n_steps, n_burn, 
             np.asarray(x0, dtype=float), np.asarray(Phi0, dtype=float), self.dim
         )
         return self.x, self.phi, self.Q, self.R

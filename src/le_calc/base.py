@@ -45,8 +45,10 @@ class DynamicalSystem:
         # 1. Warm up basic function handles (forward_map, ode, jac)
         for attr in ['forward_map', 'ode', 'jac']:
             if (handle := getattr(self, attr, None)) and callable(handle):
-                try: handle(np.ones(self.dim))
-                except: pass
+                try: 
+                    handle(np.ones(self.dim))
+                except: 
+                    pass
 
         # 2. Trigger simulation loop compilation (subclass-specific)
         self._warmup_simulation()

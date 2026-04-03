@@ -45,15 +45,26 @@ class DiscreteMap(DynamicalSystem):
     def discrete_qr_lyapunov_spectrum(self, qr_method: str = 'householder') -> np.ndarray:
         """Compute the Lyapunov spectrum using the discrete QR method."""
         self.J = self.jac(self.x)
+        
+        # 1D case is a simple average of log-Jacobian
         if self.dim == 1:
             self.lyapunov_spectrum = np.array([np.mean(np.log(np.abs(self.J.flatten())))])
             return self.lyapunov_spectrum
 
-        qrf = (qr_GS_2x2 if self.dim == 2 else qr_GS_3x3) if qr_method == 'gram-schmidt' and self.dim in [2, 3] else qr_HH
+        # Select the appropriate QR decomposition function
+        if qr_method == 'gram-schmidt' and self.dim == 2:
+            qr_func = qr_GS_2x2
+        elif qr_method == 'gram-schmidt' and self.dim == 3:
+            qr_func = qr_GS_3x3
+        else:
+            qr_func = qr_HH
         
         if self.jit_enabled:
-            self.Q, self.R = discrete_qr_loop_2d(self.J, self.n_steps) if self.dim == 2 else \
-                             discrete_qr_loop(qrf, self.J, self.n_steps, self.dim)
+            # Use specialized 2D loop for performance if applicable
+            if self.dim == 2:
+                self.Q, self.R = discrete_qr_loop_2d(self.J, self.n_steps)
+            else:
+                self.Q, self.R = discrete_qr_loop(qr_func, self.J, self.n_steps, self.dim)
         else:
             Q = np.eye(self.dim)
             self.Q = self.R = np.empty((self.n_steps, self.dim, self.dim))

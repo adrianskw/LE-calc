@@ -43,7 +43,7 @@ def discrete_qr_spectrum(R_history: np.ndarray, dt: float = 1.0) -> np.ndarray:
     return np.mean(np.log(np.abs(R_diag)), axis=0) / dt
 
 
-@njit(cache=True)
+@njit
 def matrix_exponential_spectrum(
     J_history: np.ndarray, 
     dt: float, 
@@ -94,7 +94,7 @@ def matrix_exponential_spectrum(
 # JIT-Compiled Calculation Loops (Standardized)
 # ---------------------------------------------------------------------------
 
-@njit(cache=True)
+@njit
 def discrete_qr_loop_2d(J: np.ndarray, n_steps: int) -> tuple[np.ndarray, np.ndarray]:
     """Highly optimized, fully-inlined 2x2 QR loop for discrete maps."""
     Q = np.eye(2)
@@ -117,7 +117,7 @@ def discrete_qr_loop_2d(J: np.ndarray, n_steps: int) -> tuple[np.ndarray, np.nda
     return Q_out, R_out
 
 
-@njit(cache=True)
+@njit
 def discrete_qr_loop(qr_func, J: np.ndarray, n_steps: int, dim: int) -> tuple[np.ndarray, np.ndarray]:
     """Generic JIT-compiled QR re-orthonormalization loop for discrete maps."""
     Q = np.eye(dim)
