@@ -3,7 +3,7 @@ methods.py — methods for calculating Lyapunov exponents
 """
 
 import numpy as np
-from .utils import njit, qr_GS_2x2, qr_GS_3x3, qr_HH
+from .utils import njit, qr_GS_2x2, qr_GS_3x3, qr_HH, HAS_NUMBA
 
 
 def local_lyapunov_exponents(Q_history: np.ndarray, J_history: np.ndarray) -> np.ndarray:
@@ -11,7 +11,6 @@ def local_lyapunov_exponents(Q_history: np.ndarray, J_history: np.ndarray) -> np
     Compute the local Lyapunov exponents from the continuous QR formulation.
     Formula: chi_i(t) = (Q^T(t) * J(t) * Q(t))_ii
     """
-    from .utils import HAS_NUMBA
     if HAS_NUMBA:
         return local_lyapunov_exponents_jit(Q_history, J_history)
 
@@ -24,7 +23,6 @@ def local_lyapunov_exponents(Q_history: np.ndarray, J_history: np.ndarray) -> np
 
 def continuous_qr_spectrum(Q_history: np.ndarray, J_history: np.ndarray) -> np.ndarray:
     """Compute the Lyapunov spectrum using the continuous QR formulation with a simple mean."""
-    from .utils import HAS_NUMBA
     if HAS_NUMBA:
         return continuous_qr_spectrum_jit(Q_history, J_history)
 
@@ -89,6 +87,48 @@ def matrix_exponential_spectrum(
     # 5. Final spectrum calculation
     return log_sums / (n_steps * dt)
 
+@njit
+def taylor_spectrum(
+    J_history: np.ndarray, 
+    xdot_H_history: np.ndarray,
+    dt: float, 
+    qr_method: str = 'householder'
+) -> np.ndarray:
+    """
+    Compute the Lyapunov spectrum using the partial derivatives of the Taylor series expansion.
+    Fully JIT-compiled and memory-optimized (O(1) storage).
+    """
+    n_steps, dim, _ = J_history.shape
+    log_sums = np.zeros(dim)
+    
+    # 1. Pre-allocate integration workspaces
+    Q_curr = np.eye(dim)
+    I_dim = np.eye(dim)
+    M = np.empty((dim, dim))
+    
+    for n in range(n_steps):
+        # 2. Taylor expansion for exp(J*dt) 
+        M = (I_dim + dt*J_history[n] + 
+             (dt**2)/2 * (J_history[n] @ J_history[n] + xdot_H_history[n]) +
+             (dt**3)/6 * (J_history[n] @ J_history[n] @ J_history[n]) +
+             (dt**4)/24 * (J_history[n] @ J_history[n] @ J_history[n] @ J_history[n]))
+        
+        # 3. Evolve basis frame
+        if qr_method == 'gram-schmidt' and dim == 2:
+            Q_next, R = qr_GS_2x2(M @ Q_curr)
+        elif qr_method == 'gram-schmidt' and dim == 3:
+            Q_next, R = qr_GS_3x3(M @ Q_curr)
+        else:
+            Q_next, R = qr_HH(M @ Q_curr)
+
+        Q_curr = np.ascontiguousarray(Q_next)
+        
+        # 4. Accumulate growth directly (lambda_i = mean(ln|R_ii|) / dt)
+        for d in range(dim):
+            log_sums[d] += np.log(np.abs(R[d, d]))
+            
+    # 5. Final spectrum calculation
+    return log_sums / (n_steps * dt)
 
 # ---------------------------------------------------------------------------
 # JIT-Compiled Calculation Loops (Standardized)

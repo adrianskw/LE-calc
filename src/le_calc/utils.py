@@ -12,12 +12,7 @@ try:
     from numba import njit
     HAS_NUMBA = True
 except ImportError:
-    HAS_NUMBA = False
-    def njit(func=None, **kwargs):
-        """No-op decorator: returns the function unchanged when Numba is absent."""
-        if func is not None:
-            return func          # @njit without arguments
-        return lambda f: f       # @njit(...) with arguments
+    HAS_NUMBA, njit = False, lambda f=None, **k: f if callable(f) else (lambda g: g)
 
 
 # ---------------------------------------------------------------------------
@@ -107,13 +102,14 @@ def rk2(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
 
 @njit
 def rk2_var(ode_func, jac_func, dt: float,
-            y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Midpoint (RK2) step for state + variational equation."""
     k1 = ode_func(y)
-    L1 = jac_func(y) @ Phi
+    J_curr = jac_func(y)
+    L1 = J_curr @ Phi
     k2 = ode_func(y + 0.5 * dt * k1)
     L2 = jac_func(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
-    return y + dt * k2, Phi + dt * L2
+    return y + dt * k2, Phi + dt * L2, J_curr
 
 
 @njit
@@ -128,10 +124,11 @@ def rk4(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
 
 @njit
 def rk4_var(ode_func, jac_func, dt: float,
-            y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Classic Runge-Kutta 4th-order (RK4) step for state + variational equation."""
     k1 = ode_func(y)
-    L1 = jac_func(y) @ Phi
+    J_curr = jac_func(y)
+    L1 = J_curr @ Phi
     k2 = ode_func(y + 0.5 * dt * k1)
     L2 = jac_func(y + 0.5 * dt * k1) @ (Phi + 0.5 * dt * L1)
     k3 = ode_func(y + 0.5 * dt * k2)
@@ -140,7 +137,7 @@ def rk4_var(ode_func, jac_func, dt: float,
     L4 = jac_func(y + dt * k3) @ (Phi + dt * L3)
     y_next = y + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
     Phi_next = Phi + (dt / 6.0) * (L1 + 2.0 * L2 + 2.0 * L3 + L4)
-    return y_next, Phi_next
+    return y_next, Phi_next, J_curr
 
 RK_METHODS = {
     'RK2': rk2,
@@ -150,6 +147,12 @@ RK_METHODS = {
 RK_VAR_METHODS = {
     'RK2': rk2_var,
     'RK4': rk4_var,
+}
+
+QR_METHODS = {
+    'gram-schmidt-2x2': qr_GS_2x2,
+    'gram-schmidt-3x3': qr_GS_3x3,
+    'householder': qr_HH
 }
 
 # ---------------------------------------------------------------------------
@@ -187,31 +190,41 @@ def simulate_ode(step_func, ode_func, dt, n_steps, n_burn, x0, dim):
 
 @njit
 def simulate_ode_var(step_func, ode_func, jac_func, qr_func, dt, n_steps, n_burn, x0, Phi0, dim):
-    """Generic JIT-compiled simulation loop for ODE state + variational equation."""
-    # Pre-allocate histories
-    x_hist = np.empty((n_steps, dim))
-    Phi_hist = np.empty((n_steps, dim, dim))
-    Q_hist = np.empty((n_steps, dim, dim))
-    R_hist = np.empty((n_steps, dim, dim))
+    """Generic JIT-compiled simulation loop for ODE state + variational equation.
     
-    # Workspaces
-    Q_work = np.empty((dim, dim))
+    Returns
+    -------
+    x_hist   : (n_steps, dim) state trajectory
+    Phi_hist : (n_steps, dim, dim) fundamental matrices
+    Q_hist   : (n_steps, dim, dim) orthogonal frames
+    R_hist   : (n_steps, dim, dim) triangular growth factors
+    J_hist   : (n_steps, dim, dim) Jacobian history
+    """
+    # Pre-allocate histories
+    x_hist   = np.empty((n_steps, dim))
+    Phi_hist = np.empty((n_steps, dim, dim))
+    Q_hist   = np.empty((n_steps, dim, dim))
+    R_hist   = np.empty((n_steps, dim, dim))
+    J_hist   = np.empty((n_steps, dim, dim))
+    
+    # Track the current basis frame (orthogonal fundamental matrix)
+    Q_curr = Phi0
 
     for i in range(n_burn + n_steps):
         # 1. Perform QR re-orthonormalization
-        if i < n_burn:
-            Q_work[:], _ = qr_func(Phi0)
-            Q_basis = Q_work
-        else:
+        q_out, r_out = qr_func(Q_curr)
+
+        if i >= n_burn:
             idx = i - n_burn
             x_hist[idx] = x0
-            Phi_hist[idx] = Phi0
-            
-            q_out, r_out = qr_func(Phi0)
+            Phi_hist[idx] = Q_curr
             Q_hist[idx], R_hist[idx] = q_out, r_out
-            Q_basis = Q_hist[idx]
         
-        # 2. Advance one step using the orthogonalized basis
-        x0, Phi0 = step_func(ode_func, jac_func, dt, x0, Q_basis)
+        # 2. Advance one step using the orthogonalized basis (q_out)
+        q_contig = np.ascontiguousarray(q_out)
+        x0, Q_curr, J_curr = step_func(ode_func, jac_func, dt, x0, q_contig)
+
+        if i >= n_burn:
+            J_hist[i - n_burn] = J_curr
         
-    return x_hist, Phi_hist, Q_hist, R_hist
+    return x_hist, Phi_hist, Q_hist, R_hist, J_hist

@@ -1,24 +1,26 @@
 import numpy as np
 import time
 import sys
-import os
+from pathlib import Path
 from contextlib import contextmanager
 
 # Ensure we can import from src directory
-if os.path.join(os.getcwd(), 'src') not in sys.path:
-    sys.path.append(os.path.join(os.getcwd(), 'src'))
+src_path = str(Path(__file__).parent.resolve() / 'src')
+if src_path not in sys.path:
+    sys.path.append(src_path)
 
 from le_calc.maps import LogisticMap, HenonMap
-from le_calc.odes import Lorenz63
+from le_calc.odes import Lorenz63, Rossler
 from le_calc.methods import (
     continuous_qr_spectrum, 
     discrete_qr_spectrum,
-    matrix_exponential_spectrum
+    matrix_exponential_spectrum,
+    taylor_spectrum
 )
 
 # Global constants for uniform output formatting
-SPACING1 = 66  # For header separator lines
-SPACING2 = 33  # For label widths in benchmarks
+SPACING1 = 64  # For header separator lines
+SPACING2 = 30  # For label widths in benchmarks
 
 @contextmanager
 def timer(label):
@@ -38,33 +40,32 @@ def run_discrete_map_benchmarks():
     
     for name, cls, x0 in [("Logistic Map (r=4.0)", LogisticMap, 0.65), 
                           ("Henon Map (a=1.4, b=0.3)", HenonMap, [0.5, 0.2])]:
-        print("\n" + "-"*SPACING1 + f"\n      {name.upper()}\n" + "-"*SPACING1)
+        print("-"*SPACING1 + f"\n      {name.upper()}\n" + "-"*SPACING1)
         
         # Phase 1: JIT Warmup
         with timer("JIT Warmup / Initialization"): 
-            sys = cls()
+            system = cls()
         
         # Phase 2: Trajectory Simulation
         with timer(f"Simulation (1,000,000 steps)"): 
-            sys.simulate(x0, 1_000_000)
+            system.simulate(x0, 1_000_000)
         
         # Phase 3: Lyapunov Analysis
-        qr_methods = ['householder', 'gram-schmidt'] if sys.dim > 1 else ['householder']
+        qr_methods = ['householder', 'gram-schmidt'] if system.dim > 1 else ['householder']
         for qm in qr_methods:
-            with timer(f"Calculation Time"): 
-                spec = sys.discrete_qr_lyapunov_spectrum(qm)
-            print_spectrum(f"Lyapunov Spectrum ({qm})", spec)
+            with timer(f"Discrete QR ({qm.capitalize()})"): 
+                spec = system.discrete_qr_lyapunov_spectrum(qm)
+            print_spectrum(f"Lyapunov Spectrum", spec)
 
-def run_lorenz_benchmarks():
-    """Run and compare different Lyapunov estimation methods for the Lorenz ODE."""
-    print("\n" + "="*SPACING1 + "\n      LORENZ 63 ODE BENCHMARKS\n" + "="*SPACING1)
+def run_ode_benchmark(name, cls, x0, t_burn, t_window, dt):
+    """Generic helper to run and compare Lyapunov methods for an ODE system."""
+    print("\n" + "="*SPACING1 + f"\n      {name.upper()} BENCHMARKS\n" + "="*SPACING1)
     
     # Phase 1: Setup & Warmup
     with timer("JIT Warmup / Initialization"): 
-        system = Lorenz63()
+        system = cls()
     
-    x0, Phi0, dt = [1.0, 1.0, 10.0], np.eye(3), 0.0025
-    t_burn, t_window = 50.0, 2500.0
+    Phi0 = np.eye(system.dim)
     t_span = (t_burn, t_burn + t_window)
 
     print(f"{'Transient period (Burn-in)':{SPACING2}}: {t_burn}")
@@ -73,13 +74,12 @@ def run_lorenz_benchmarks():
     print(f"{'Number of steps':{SPACING2}}: {int(t_window / dt):,}")
 
     for method in ['RK2', 'RK4']:
-        
         for qm in ['gram-schmidt', 'householder']:
             print("\n" + "-"*SPACING1 + f"\n      {qm.upper()} QR ({method})\n" + "-"*SPACING1)
             
             # Phase 2: Integration of Variational Equations
-            with timer(f"Integration ({method}/{qm.capitalize()})"):
-                _, _, Q_hist, R_hist = system.simulate_var(dt, t_span, x0, Phi0, method, qm)
+            with timer("Integration"):
+                _, _, Q_hist, R_hist, _ = system.simulate_var(dt, t_span, x0, Phi0, method, qm)
             
             # Phase 3: Lyapunov Spectrum Comparison
             with timer("Method 1: Discrete QR"):
@@ -87,13 +87,44 @@ def run_lorenz_benchmarks():
             print_spectrum("Lyapunov Spectrum", spec1)
             
             with timer("Method 2: Continuous QR"):
-                spec2 = continuous_qr_spectrum(Q_hist, system.calc_jac())
+                spec2 = continuous_qr_spectrum(Q_hist, system.J)
             print_spectrum("Lyapunov Spectrum", spec2)
             
-            with timer("Method 3: Matrix Exp"):
-                spec3 = matrix_exponential_spectrum(system.J, dt, qr_method=qm)
+            with timer("Method 3: Matrix Exp (2nd)"):
+                spec3 = matrix_exponential_spectrum(system.J, dt, qr_method=qm, order=2)
             print_spectrum("Lyapunov Spectrum", spec3)
+            
+            with timer("Method 4: Matrix Exp (4th)"):
+                spec4 = matrix_exponential_spectrum(system.J, dt, qr_method=qm, order=4)
+            print_spectrum("Lyapunov Spectrum", spec4)
+            
+            # with timer("Method 5: Taylor Exp"):
+            #     spec5 = taylor_spectrum(system.J, system.calc_xdot_H(), dt, qr_method=qm)
+            # print_spectrum("Lyapunov Spectrum", spec5)
+
+def run_lorenz_benchmarks():
+    """Run benchmarks for the Lorenz 63 system."""
+    run_ode_benchmark(
+        name="Lorenz 63 ODE",
+        cls=Lorenz63,
+        x0=[1.0, 1.0, 10.0],
+        t_burn=50.0,
+        t_window=2500.0,
+        dt=0.005
+    )
+
+def run_rossler_benchmarks():
+    """Run benchmarks for the Rossler system."""
+    run_ode_benchmark(
+        name="Rossler ODE",
+        cls=Rossler,
+        x0=[1.0, 1.0, 0.5],
+        t_burn=100.0,
+        t_window=5000.0,
+        dt=0.01
+    )
 
 if __name__ == "__main__":
     run_discrete_map_benchmarks()
     run_lorenz_benchmarks()
+    run_rossler_benchmarks()

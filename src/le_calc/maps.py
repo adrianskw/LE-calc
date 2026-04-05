@@ -8,7 +8,7 @@ Each system defines:
 
 import numpy as np
 from .base import DynamicalSystem
-from .utils import njit, qr_GS_2x2, qr_GS_3x3, qr_HH, simulate_map
+from .utils import njit, simulate_map
 from .methods import (
     discrete_qr_spectrum, 
     discrete_qr_loop, 
@@ -16,9 +16,9 @@ from .methods import (
 )
 
 
-# ===========================================================================
-# JIT-Compiled Simulation Kernel (Moved to utils.py)
-# ===========================================================================
+# ---------------------------------------------------------------------------
+# Base classes for maps
+# ---------------------------------------------------------------------------
 
 
 class DiscreteMap(DynamicalSystem):
@@ -26,11 +26,12 @@ class DiscreteMap(DynamicalSystem):
     Base class for discrete-time dynamical systems (maps).
     """
 
-    def __init__(self, dim: int, eager_compile: bool = True):
-        super().__init__(dim=dim, eager_compile=eager_compile)
+    def __init__(self, dim: int, **kwargs):
+        super().__init__(dim=dim, **kwargs)
 
-    def _warmup_specific(self) -> None:
+    def compile(self) -> None:
         """Trigger JIT compilation for simulation and spectrum calculation."""
+        super().compile()
         x0_dummy = np.ones(self.dim)
         self.simulate(x0_dummy, 1)
         for qm in (['householder', 'gram-schmidt'] if self.dim in [2, 3] else ['householder']):
@@ -51,13 +52,7 @@ class DiscreteMap(DynamicalSystem):
             self.lyapunov_spectrum = np.array([np.mean(np.log(np.abs(self.J.flatten())))])
             return self.lyapunov_spectrum
 
-        # Select the appropriate QR decomposition function
-        if qr_method == 'gram-schmidt' and self.dim == 2:
-            qr_func = qr_GS_2x2
-        elif qr_method == 'gram-schmidt' and self.dim == 3:
-            qr_func = qr_GS_3x3
-        else:
-            qr_func = qr_HH
+        qr_func = self._get_qr_func(qr_method)
         
         if self.jit_enabled:
             # Use specialized 2D loop for performance if applicable
@@ -69,7 +64,7 @@ class DiscreteMap(DynamicalSystem):
             Q = np.eye(self.dim)
             self.Q = self.R = np.empty((self.n_steps, self.dim, self.dim))
             for i in range(self.n_steps):
-                Q, self.R[i] = qrf(self.J[i] @ Q)
+                Q, self.R[i] = qr_func(self.J[i] @ Q)
                 self.Q[i] = Q
 
         self.lyapunov_spectrum = discrete_qr_spectrum(self.R)
@@ -83,7 +78,7 @@ class DiscreteMap(DynamicalSystem):
 class LogisticMap(DiscreteMap):
     """1D Logistic Map: x_{n+1} = r * x_n * (1 - x_n)."""
 
-    def __init__(self, r: float = 4.0, eager_compile: bool = True):
+    def __init__(self, r: float = 4.0, **kwargs):
         self.r = r
         
         # Define Forward Map here:
@@ -93,7 +88,7 @@ class LogisticMap(DiscreteMap):
         self.forward_map = forward_map
         
         # Super constructor handles warmup 
-        super().__init__(dim=1, eager_compile=eager_compile)
+        super().__init__(dim=1, **kwargs)
 
     # vectorized jac method, no need for JIT compilation
     def jac(self, x: np.ndarray = None) -> np.ndarray:
@@ -107,7 +102,7 @@ class LogisticMap(DiscreteMap):
 class HenonMap(DiscreteMap):
     """2D Hénon Map."""
 
-    def __init__(self, a: float = 1.4, b: float = 0.3, eager_compile: bool = True):
+    def __init__(self, a: float = 1.4, b: float = 0.3, **kwargs):
         self.a = a
         self.b = b
         
@@ -118,7 +113,7 @@ class HenonMap(DiscreteMap):
         self.forward_map = forward_map
         
         # Super constructor handles warmup
-        super().__init__(dim=2, eager_compile=eager_compile)
+        super().__init__(dim=2, **kwargs)
 
     # vectorized jac method, no need for JIT compilation
     def jac(self, x: np.ndarray = None) -> np.ndarray:
