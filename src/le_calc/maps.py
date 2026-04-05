@@ -30,21 +30,51 @@ class DiscreteMap(DynamicalSystem):
         super().__init__(dim=dim, **kwargs)
 
     def compile(self) -> None:
-        """Trigger JIT compilation for simulation and spectrum calculation."""
+        """
+        Trigger JIT compilation for simulation and spectrum calculation.
+        """
         super().compile()
         x0_dummy = np.ones(self.dim)
-        self.simulate(x0_dummy, 1)
-        for qm in (['householder', 'gram-schmidt'] if self.dim in [2, 3] else ['householder']):
-            self.discrete_qr_lyapunov_spectrum(qm)
+        
+        # 1. Warm up simulation loop
+        self.simulate(x0_dummy, n_steps=1)
+        
+        # 2. Warm up different QR methods for the spectrum
+        qr_methods = ['householder', 'gram-schmidt'] if self.dim in [2, 3] else ['householder']
+        for qm in qr_methods:
+            self.discrete_qr_lyapunov_spectrum(qr_method=qm)
 
-    def simulate(self, x0, n_steps: int, n_burn: int = 0):
-        """Simulate the system for n_steps from x0, after burning n_burn steps."""
+    def simulate(self, x0: np.ndarray, n_steps: int, n_burn: int = 0) -> np.ndarray:
+        """
+        Simulate the system for n_steps from x0, after burning n_burn steps.
+
+        Parameters
+        ----------
+        x0 : np.ndarray
+        n_steps : int
+        n_burn : int, optional
+
+        Returns
+        -------
+        x : np.ndarray, shape (n_steps, dim)
+        """
         self.n_steps, x0_arr = n_steps, np.atleast_1d(np.asarray(x0, dtype=float))
         self.x = simulate_map(self.forward_map, x0_arr, n_steps, n_burn, self.dim)
         return self.x
 
     def discrete_qr_lyapunov_spectrum(self, qr_method: str = 'householder') -> np.ndarray:
-        """Compute the Lyapunov spectrum using the discrete QR method."""
+        """
+        Compute the Lyapunov spectrum using the discrete QR method.
+
+        Parameters
+        ----------
+        qr_method : str, optional
+            'householder' or 'gram-schmidt'. Defaults to 'householder'.
+
+        Returns
+        -------
+        spectrum : np.ndarray, shape (dim,)
+        """
         self.J = self.jac(self.x)
         
         # 1D case is a simple average of log-Jacobian
@@ -76,18 +106,18 @@ class DiscreteMap(DynamicalSystem):
 # ---------------------------------------------------------------------------
 
 class LogisticMap(DiscreteMap):
-    """1D Logistic Map: x_{n+1} = r * x_n * (1 - x_n)."""
+    """
+    1D Logistic Map: x_{n+1} = r * x_n * (1 - x_n).
+    """
 
     def __init__(self, r: float = 4.0, **kwargs):
         self.r = r
         
-        # Define Forward Map here:
         @njit
         def forward_map(x):
             return np.array([r * x[0] * (1.0 - x[0])])
         self.forward_map = forward_map
         
-        # Super constructor handles warmup 
         super().__init__(dim=1, **kwargs)
 
     # vectorized jac method, no need for JIT compilation
@@ -100,19 +130,19 @@ class LogisticMap(DiscreteMap):
 
 
 class HenonMap(DiscreteMap):
-    """2D Hénon Map."""
+    """
+    2D Hénon Map.
+    """
 
     def __init__(self, a: float = 1.4, b: float = 0.3, **kwargs):
         self.a = a
         self.b = b
         
-        # Define Forward Map here:
         @njit
         def forward_map(x):
             return np.array([1.0 - a * x[0]**2 + x[1], b * x[0]])
         self.forward_map = forward_map
         
-        # Super constructor handles warmup
         super().__init__(dim=2, **kwargs)
 
     # vectorized jac method, no need for JIT compilation

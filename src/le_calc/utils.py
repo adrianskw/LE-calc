@@ -21,7 +21,21 @@ except ImportError:
 
 @njit(cache=True)
 def qr_GS_2x2(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Analytical 2x2 QR decomposition (Modified Gram-Schmidt)."""
+    """
+    Analytical 2x2 QR decomposition using Modified Gram-Schmidt.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        The 2x2 matrix to decompose.
+
+    Returns
+    -------
+    Q : np.ndarray
+        Orthogonal matrix (2x2).
+    R : np.ndarray
+        Upper triangular matrix (2x2).
+    """
     a00, a10 = A[0, 0], A[1, 0]
     r11 = np.sqrt(a00*a00 + a10*a10)
     q00, q10 = a00 / r11, a10 / r11
@@ -44,7 +58,21 @@ def qr_GS_2x2(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 @njit(cache=True)
 def qr_GS_3x3(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Analytical 3x3 QR decomposition (Modified Gram-Schmidt)."""
+    """
+    Analytical 3x3 QR decomposition using Modified Gram-Schmidt.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        The 3x3 matrix to decompose.
+
+    Returns
+    -------
+    Q : np.ndarray
+        Orthogonal matrix (3x3).
+    R : np.ndarray
+        Upper triangular matrix (3x3).
+    """
     a00, a10, a20 = A[0, 0], A[1, 0], A[2, 0]
     a01, a11, a21 = A[0, 1], A[1, 1], A[2, 1]
     a02, a12, a22 = A[0, 2], A[1, 2], A[2, 2]
@@ -82,28 +110,72 @@ def qr_GS_3x3(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 @njit(cache=True)
 def qr_HH(A: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """JIT-compiled wrapper for np.linalg.qr."""
+    """
+    JIT-compiled wrapper for np.linalg.qr (Householder).
+
+    Parameters
+    ----------
+    A : np.ndarray
+        The matrix to decompose.
+
+    Returns
+    -------
+    Q, R : tuple[np.ndarray, np.ndarray]
+    """
     return np.linalg.qr(A)
     
 
 # ---------------------------------------------------------------------------
 # Runge-Kutta steppers — JIT-compiled versions
-# All accept (ode_func, dt, y) or (ode_func, jac_func, dt, y, Phi).
 # ---------------------------------------------------------------------------
 
 
-@njit
-def rk2(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
-    """Midpoint (RK2) step."""
+@njit(cache=True)
+def rk2(ode_func: callable, dt: float, y: np.ndarray) -> np.ndarray:
+    """
+    Advance one step using the Midpoint (RK2) method.
+
+    Parameters
+    ----------
+    ode_func : callable
+        System vector field f(x).
+    dt : float
+        Time step.
+    y : np.ndarray
+        Current state.
+
+    Returns
+    -------
+    y_next : np.ndarray
+    """
     k1 = ode_func(y)
     k2 = ode_func(y + 0.5 * dt * k1)
     return y + dt * k2
 
 
-@njit
-def rk2_var(ode_func, jac_func, dt: float,
+@njit(cache=True)
+def rk2_var(ode_func: callable, jac_func: callable, dt: float,
             y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Midpoint (RK2) step for state + variational equation."""
+    """
+    Advance one step for state and variational equations using RK2.
+
+    Parameters
+    ----------
+    ode_func : callable
+        System vector field f(x).
+    jac_func : callable
+        System Jacobian df/dx.
+    dt : float
+        Time step.
+    y : np.ndarray
+        Current state.
+    Phi : np.ndarray
+        Current fundamental matrix or basis frame.
+
+    Returns
+    -------
+    y_next, Phi_next, J_curr : tuple
+    """
     k1 = ode_func(y)
     J_curr = jac_func(y)
     L1 = J_curr @ Phi
@@ -112,9 +184,24 @@ def rk2_var(ode_func, jac_func, dt: float,
     return y + dt * k2, Phi + dt * L2, J_curr
 
 
-@njit
-def rk4(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
-    """Classic Runge-Kutta 4th-order (RK4) step."""
+@njit(cache=True)
+def rk4(ode_func: callable, dt: float, y: np.ndarray) -> np.ndarray:
+    """
+    Advance one step using the classic RK4 method.
+
+    Parameters
+    ----------
+    ode_func : callable
+        System vector field.
+    dt : float
+        Time step.
+    y : np.ndarray
+        Current state.
+
+    Returns
+    -------
+    y_next : np.ndarray
+    """
     k1 = ode_func(y)
     k2 = ode_func(y + 0.5 * dt * k1)
     k3 = ode_func(y + 0.5 * dt * k2)
@@ -122,10 +209,24 @@ def rk4(ode_func, dt: float, y: np.ndarray) -> np.ndarray:
     return y + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
 
-@njit
-def rk4_var(ode_func, jac_func, dt: float,
+@njit(cache=True)
+def rk4_var(ode_func: callable, jac_func: callable, dt: float,
             y: np.ndarray, Phi: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Classic Runge-Kutta 4th-order (RK4) step for state + variational equation."""
+    """
+    Advance one step for state and variational equations using RK4.
+
+    Parameters
+    ----------
+    ode_func : callable
+    jac_func : callable
+    dt : float
+    y : np.ndarray
+    Phi : np.ndarray
+
+    Returns
+    -------
+    y_next, Phi_next, J_curr : tuple
+    """
     k1 = ode_func(y)
     J_curr = jac_func(y)
     L1 = J_curr @ Phi
@@ -156,12 +257,31 @@ QR_METHODS = {
 }
 
 # ---------------------------------------------------------------------------
-# Discrete map simulation utilities
+# Trajectory simulation kernels
 # ---------------------------------------------------------------------------
 
-@njit
-def simulate_map(map_func, x0: np.ndarray, n_steps: int, n_burn: int, dim: int) -> np.ndarray:
-    """Generic JIT-compiled simulation loop for discrete-time maps (unified loop)."""
+@njit(cache=True)
+def simulate_map(map_func: callable, x0: np.ndarray, n_steps: int, n_burn: int, dim: int) -> np.ndarray:
+    """
+    Standard JIT-compiled simulation loop for discrete-time maps.
+
+    Parameters
+    ----------
+    map_func : callable
+        The map equation x_{n+1} = f(x_n).
+    x0 : np.ndarray
+        Initial condition.
+    n_steps : int
+        Number of steps to record.
+    n_burn : int
+        Number of transient steps to discard.
+    dim : int
+        System dimension.
+
+    Returns
+    -------
+    x_hist : np.ndarray, shape (n_steps, dim)
+    """
     x_hist = np.empty((n_steps, dim))
     x_curr = x0
 
@@ -174,9 +294,24 @@ def simulate_map(map_func, x0: np.ndarray, n_steps: int, n_burn: int, dim: int) 
     return x_hist
 
 
-@njit
-def simulate_ode(step_func, ode_func, dt, n_steps, n_burn, x0, dim):
-    """Generic JIT-compiled simulation loop for ODE state only."""
+@njit(cache=True)
+def simulate_ode(step_func: callable, ode_func: callable, dt: float, 
+                 n_steps: int, n_burn: int, x0: np.ndarray, dim: int) -> np.ndarray:
+    """
+    Standard JIT-compiled simulation loop for ODE state only.
+
+    Parameters
+    ----------
+    step_func : callable
+    ode_func : callable
+    dt : float
+    n_steps, n_burn, dim : int
+    x0 : np.ndarray
+
+    Returns
+    -------
+    x_hist : np.ndarray, shape (n_steps, dim)
+    """
     x_hist = np.empty((n_steps, dim))
 
     for i in range(n_burn + n_steps):
@@ -188,17 +323,31 @@ def simulate_ode(step_func, ode_func, dt, n_steps, n_burn, x0, dim):
     return x_hist
 
 
-@njit
-def simulate_ode_var(step_func, ode_func, jac_func, qr_func, dt, n_steps, n_burn, x0, Phi0, dim):
-    """Generic JIT-compiled simulation loop for ODE state + variational equation.
-    
+@njit(cache=True)
+def simulate_ode_var(step_func: callable, ode_func: callable, jac_func: callable, 
+                     qr_func: callable, dt: float, n_steps: int, n_burn: int, 
+                     x0: np.ndarray, Phi0: np.ndarray, dim: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Performance kernel for the high-frequency integration + QR pipeline.
+
+    Parameters
+    ----------
+    step_func : callable
+        Variational RK stepper (rk2_var or rk4_var).
+    ode_func : callable
+    jac_func : callable
+    qr_func : callable
+    dt : float
+    n_steps, n_burn, dim : int
+    x0, Phi0 : np.ndarray
+
     Returns
     -------
-    x_hist   : (n_steps, dim) state trajectory
-    Phi_hist : (n_steps, dim, dim) fundamental matrices
-    Q_hist   : (n_steps, dim, dim) orthogonal frames
-    R_hist   : (n_steps, dim, dim) triangular growth factors
-    J_hist   : (n_steps, dim, dim) Jacobian history
+    x_hist   : np.ndarray, shape (n_steps, dim)
+    Phi_hist : np.ndarray, shape (n_steps, dim, dim)
+    Q_hist   : np.ndarray, shape (n_steps, dim, dim)
+    R_hist   : np.ndarray, shape (n_steps, dim, dim)
+    J_hist   : np.ndarray, shape (n_steps, dim, dim)
     """
     # Pre-allocate histories
     x_hist   = np.empty((n_steps, dim))

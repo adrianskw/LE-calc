@@ -29,6 +29,16 @@ class DynamicalSystem:
         Whether to use JIT-compiled function handles for optimization.
     """
     def __init__(self, dim: int, **kwargs):
+        """
+        Initialize the dynamical system.
+
+        Parameters
+        ----------
+        dim : int
+            Dimension of the state space.
+        **kwargs : dict
+            Optional parameters (e.g., eager_compile=True).
+        """
         eager_compile = kwargs.get('eager_compile', True)
         self.dim, self.n_steps, self.jit_enabled = dim, 0, HAS_NUMBA
         self.x, self.lyapunov_spectrum = np.empty((0, dim)), np.empty(dim)
@@ -38,16 +48,29 @@ class DynamicalSystem:
         if self.jit_enabled and eager_compile:
             self.compile()
 
-    def _get_qr_func(self, qr_method: str):
-        """Standardized QR function lookup."""
+    def _get_qr_func(self, qr_method: str) -> callable:
+        """
+        Internal helper to retrieve the appropriate JIT-compiled QR routine.
+
+        Parameters
+        ----------
+        qr_method : str
+            Desired method ('gram-schmidt' or 'householder').
+
+        Returns
+        -------
+        qr_func : callable
+        """
         if qr_method == 'gram-schmidt':
             return QR_METHODS[f'gram-schmidt-{self.dim}x{self.dim}']
         return QR_METHODS['householder']
 
     def compile(self) -> None:
         """
-        Triggers JIT compilation for all core handles by running dummy steps.
-        Subclasses should override this and call super().compile() for full coverage.
+        Warm up JIT compilation for core function handles (ODE, Jacobian, etc.).
+
+        Triggers 'lazy' JIT compilation by running a single dummy execution of
+        the base systems. Subclasses should override this and call super().compile().
         """
         if not self.jit_enabled:
             return
