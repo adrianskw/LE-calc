@@ -82,23 +82,23 @@ def run_ode_benchmark(name, cls, x0, t_burn, t_window, dt):
                 _, _, Q_hist, R_hist, _ = system.simulate_var(dt, t_span, x0, Phi0, method, qm)
             
             # Phase 3: Lyapunov Spectrum Comparison
-            with timer("Method 1: Discrete QR"):
+            with timer("Method: Discrete QR"):
                 spec1 = discrete_qr_spectrum(R_hist, dt)
             print_spectrum("Lyapunov Spectrum", spec1)
             
-            with timer("Method 2: Continuous QR"):
+            with timer("Method: Continuous QR"):
                 spec2 = continuous_qr_spectrum(Q_hist, system.J)
             print_spectrum("Lyapunov Spectrum", spec2)
             
-            with timer("Method 3: Matrix Exp (2nd)"):
-                spec3 = matrix_exponential_spectrum(system.J, dt, qr_method=qm, order=2)
-            print_spectrum("Lyapunov Spectrum", spec3)
+            # with timer("Method: Matrix Exp (2nd)"):
+            #     spec3 = matrix_exponential_spectrum(system.J, dt, qr_method=qm, order=2)
+            # print_spectrum("Lyapunov Spectrum", spec3)
             
-            with timer("Method 4: Matrix Exp (4th)"):
+            with timer("Method: Matrix Exp (4th)"):
                 spec4 = matrix_exponential_spectrum(system.J, dt, qr_method=qm, order=4)
             print_spectrum("Lyapunov Spectrum", spec4)
             
-            # with timer("Method 5: Taylor Exp"):
+            # with timer("Method: Taylor Exp"):
             #     spec5 = taylor_spectrum(system.J, system.calc_xdot_H(), dt, qr_method=qm)
             # print_spectrum("Lyapunov Spectrum", spec5)
 
@@ -108,7 +108,7 @@ def run_lorenz_benchmarks():
         name="Lorenz 63 ODE",
         cls=Lorenz63,
         x0=[1.0, 1.0, 10.0],
-        t_burn=50.0,
+        t_burn=100.0,
         t_window=2500.0,
         dt=0.005
     )
