@@ -39,7 +39,8 @@ def local_lyapunov_exponents(Q_history: np.ndarray,
 
 
 def continuous_qr_spectrum(Q_history: np.ndarray,
-                            J_history: np.ndarray) -> np.ndarray:
+                            J_history: np.ndarray,
+                            return_local: bool = False):
     """
     Lyapunov spectrum via the continuous-QR formulation.
 
@@ -49,11 +50,21 @@ def continuous_qr_spectrum(Q_history: np.ndarray,
     ----------
     Q_history : np.ndarray, shape (n_steps, dim, dim)
     J_history : np.ndarray, shape (n_steps, dim, dim)
+    return_local : bool, optional
+        If True, also returns the instantaneous local Lyapunov exponents.
 
     Returns
     -------
     spectrum : np.ndarray, shape (dim,)
+    local_les : np.ndarray, shape (n_steps, dim) (only if return_local is True)
     """
+    if return_local:
+        if HAS_NUMBA:
+            local_les = _local_lyapunov_exponents_jit(Q_history, J_history)
+        else:
+            local_les = local_lyapunov_exponents(Q_history, J_history)
+        return np.mean(local_les, axis=0), local_les
+
     if HAS_NUMBA:
         return _continuous_qr_spectrum_jit(Q_history, J_history)
     return np.mean(local_lyapunov_exponents(Q_history, J_history), axis=0)
